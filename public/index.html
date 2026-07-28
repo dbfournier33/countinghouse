@@ -70,7 +70,10 @@ async function render() {
   ])
 
   const cash = tb.accounts.find((a) => a.code === '1110')?.balance ?? 0
-  const rev = tb.accounts.find((a) => a.code === '4100')?.balance ?? 0
+  // Net revenue across all revenue accounts (contra accounts are debit-normal).
+  const rev = tb.accounts
+    .filter((a) => a.kind === 'revenue')
+    .reduce((s, a) => s + (a.normal_side === 'credit' ? a.balance : -a.balance), 0)
   const cogs = tb.accounts.find((a) => a.code === '5110')?.balance ?? 0
   document.getElementById('tiles').replaceChildren(el(`
     <div class="tile ok"><div class="k">Trial balance</div>

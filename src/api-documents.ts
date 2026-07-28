@@ -15,6 +15,7 @@ import {
 import { compareTrialBalance, getMapping, qbSummary, updateMapping } from './qb-bridge.js'
 import { createEmployee, listEmployees, listTimeEntries, recordTime } from './people.js'
 import { analyze, commit, type ImportKind } from './importer.js'
+import { createChannelSettlement, listChannelSettlements, recordChannelShipments } from './channels.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -164,6 +165,34 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
       })
       .parse(await c.req.json())
     return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
+  }))
+
+  // --- D2C channel settlements ---------------------------------------------
+  const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  app.post('/api/channel-settlements', wrap(async (c) => {
+    const body = z
+      .object({
+        channel: z.string().min(1),
+        period_start: dateStr,
+        period_end: dateStr,
+        gross_sales: z.number().nonnegative(),
+        refunds: z.number().nonnegative().optional(),
+        fees: z.number().nonnegative().optional(),
+      })
+      .parse(await c.req.json())
+    return c.json(await createChannelSettlement(db, c.var.tenantId, body), 201)
+  }))
+  app.get('/api/channel-settlements', async (c) =>
+    c.json(await listChannelSettlements(db, c.var.tenantId)))
+  app.post('/api/channel-shipments', wrap(async (c) => {
+    const body = z
+      .object({
+        channel: z.string().min(1),
+        period_end: dateStr,
+        lines: z.array(z.object({ sku: z.string().min(1), qty: z.number().positive() })).min(1),
+      })
+      .parse(await c.req.json())
+    return c.json(await recordChannelShipments(db, c.var.tenantId, body), 201)
   }))
 
   // --- onboarding importers ------------------------------------------------

@@ -9,6 +9,7 @@ import {
   shipSalesOrder,
 } from './documents.js'
 import { createBill, payBill, recordInvoicePayment } from './finance.js'
+import { createChannelSettlement, recordChannelShipments } from './channels.js'
 import { createEmployee, recordTime } from './people.js'
 import { ingest } from './events.js'
 import { num } from './money.js'
@@ -131,6 +132,22 @@ const inv1 = await db.query<{ id: string }>(
 await recordInvoicePayment(db, tenantId, inv1.rows[0].id)
 log(`${shipped.invoice!.number}: customer payment recorded`)
 await ingest(db, tenantId, { type: 'AdjustmentMade', payload: { sku: 'WRAP', qty_delta: -15, reason: 'damaged roll end' } })
+
+// D2C week (decision #3): aggregate Shopify shipments + one payout settlement.
+await recordChannelShipments(db, tenantId, {
+  channel: 'Shopify',
+  period_end: dstr(-1),
+  lines: [{ sku: 'BAR-OG', qty: 60 }],
+})
+await createChannelSettlement(db, tenantId, {
+  channel: 'Shopify',
+  period_start: dstr(-7),
+  period_end: dstr(-1),
+  gross_sales: 594,
+  refunds: 19.8,
+  fees: 47.52,
+})
+log(`Shopify week: 60 bars shipped (COGS $23.00); settlement gross $594.00 − fees $47.52 − refunds $19.80 = payout $526.68`)
 
 // A wholesale order shipped on terms — open AR for the finance page.
 const so3 = await createSalesOrder(db, tenantId, {

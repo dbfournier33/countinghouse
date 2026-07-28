@@ -25,6 +25,7 @@ const PAGES = [
   ['planning', '/planning.html', 'Planning'],
   ['purchasing', '/purchasing.html', 'Purchasing'],
   ['sales', '/sales.html', 'Sales'],
+  ['channels', '/channels.html', 'Channels'],
   ['production', '/production.html', 'Production'],
   ['capacity', '/capacity.html', 'Capacity'],
   ['people', '/people.html', 'People'],

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Channels</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <div class="tiles" id="tiles"></div>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Record a payout settlement</h2>
+      <div class="formrow">
+        <select id="s-channel"><option>Shopify</option><option>Amazon</option><option>Faire</option><option>Etsy</option></select>
+        <input id="s-start" type="date" title="period start" />
+        <input id="s-end" type="date" title="period end" />
+      </div>
+      <div class="formrow">
+        <input class="money" id="s-gross" type="number" min="0" step="any" placeholder="gross sales $" />
+        <input class="money" id="s-refunds" type="number" min="0" step="any" placeholder="refunds $" />
+        <input class="money" id="s-fees" type="number" min="0" step="any" placeholder="fees $" />
+        <span id="s-payout" class="muted" style="font-size:13px"></span>
+        <button class="primary" id="s-post">Post settlement</button>
+      </div>
+      <div class="muted" style="font-size:13px">One entry per payout period: cash in, fees and refunds recognized, gross revenue credited. This is the shape the Shopify connector will send automatically.</div>
+    </section>
+
+    <section class="card">
+      <h2>Record channel shipments (keeps COGS true)</h2>
+      <div class="formrow">
+        <select id="h-channel"><option>Shopify</option><option>Amazon</option><option>Faire</option><option>Etsy</option></select>
+        <input id="h-end" type="date" title="period end" />
+      </div>
+      <div class="lines-editor" id="h-lines"></div>
+      <div class="actions">
+        <button class="small" id="h-add">+ line</button>
+        <button class="primary" id="h-post">Record shipments</button>
+      </div>
+      <div class="muted" style="font-size:13px">Aggregate units per SKU for the period — never per-order. Posts inventory out and COGS at moving-average cost.</div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Settlements</h2>
+    <table id="settlements"></table>
+  </section>
+
+  <footer>Wholesale AR and channel payouts land in the same P&L, reconciled by construction — that's decision #3 on one page.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'channels',
+  title: 'Channels',
+  subtitle: 'D2C payouts as summarized settlements — money and units, never per-order.',
+})
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const today = new Date()
+document.getElementById('s-end').value = iso(today)
+document.getElementById('s-start').value = iso(new Date(today.getTime() - 6 * 86_400_000))
+document.getElementById('h-end').value = iso(today)
+
+let finished = []
+
+function syncPayout() {
+  const g = Number(document.getElementById('s-gross').value) || 0
+  const r = Number(document.getElementById('s-refunds').value) || 0
+  const f = Number(document.getElementById('s-fees').value) || 0
+  const p = g - r - f
+  document.getElementById('s-payout').textContent = `payout: ${usd(p)}`
+  document.getElementById('s-payout').className = p < 0 ? 'err' : 'muted'
+}
+;['s-gross', 's-refunds', 's-fees'].forEach((id) =>
+  document.getElementById(id).addEventListener('input', syncPayout))
+syncPayout()
+
+function lineRow() {
+  return el(`<div class="formrow">
+    <select class="h-sku">${finished.map((i) => `<option value="${i.sku}">${i.sku} — ${i.name}</option>`).join('')}</select>
+    <input class="qty h-qty" type="number" min="0" step="any" placeholder="units" />
+    <button class="small h-del">×</button>
+  </div>`)
+}
+
+async function render() {
+  const [tb, settlements, items] = await Promise.all([
+    api('/api/trial-balance'), api('/api/channel-settlements'), api('/api/items'),
+  ])
+  finished = items.filter((i) => i.kind === 'finished' || i.kind === 'subassembly')
+  const lines = document.getElementById('h-lines')
+  if (!lines.children.length) lines.append(lineRow())
+
+  const bal = (code) => tb.accounts.find((a) => a.code === code)?.balance ?? 0
+  const d2c = bal('4150')
+  const refunds = bal('4190')
+  const fees = bal('6200')
+  document.getElementById('tiles').replaceChildren(el(`
+    <div class="tile"><div class="k">D2C gross revenue</div><div class="v">${usd(d2c)}</div><div class="n">4150 · all channels</div></div>
+    <div class="tile"><div class="k">Refunds</div><div class="v">${usd(refunds)}</div><div class="n">4190 · contra revenue</div></div>
+    <div class="tile"><div class="k">Channel fees</div><div class="v">${usd(fees)}</div><div class="n">6200</div></div>
+    <div class="tile"><div class="k">Net channel revenue</div><div class="v">${usd(d2c - refunds - fees)}</div><div class="n">gross − refunds − fees</div></div>
+  `))
+
+  document.getElementById('settlements').replaceChildren(el(`
+    <thead><tr><th>Channel</th><th>Period</th><th class="num">Gross</th><th class="num">Refunds</th><th class="num">Fees</th><th class="num">Payout</th></tr></thead>
+    <tbody>${settlements.map((s) => `
+      <tr>
+        <td>${s.channel}</td>
+        <td style="font-size:13px">${s.period_start} → ${s.period_end}</td>
+        <td class="num">${usd(s.gross_sales)}</td>
+        <td class="num">${s.refunds ? usd(s.refunds) : '<span class="muted">—</span>'}</td>
+        <td class="num">${s.fees ? usd(s.fees) : '<span class="muted">—</span>'}</td>
+        <td class="num" style="font-weight:650">${usd(s.payout)}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="muted">no settlements yet — post the first one above</td></tr>'}
+    </tbody>
+  `))
+}
+
+document.getElementById('s-post').addEventListener('click', async () => {
+  const body = {
+    channel: document.getElementById('s-channel').value,
+    period_start: document.getElementById('s-start').value,
+    period_end: document.getElementById('s-end').value,
+    gross_sales: Number(document.getElementById('s-gross').value) || 0,
+  }
+  const refunds = Number(document.getElementById('s-refunds').value)
+  const fees = Number(document.getElementById('s-fees').value)
+  if (refunds) body.refunds = refunds
+  if (fees) body.fees = fees
+  try {
+    const r = await api('/api/channel-settlements', { method: 'POST', body: JSON.stringify(body) })
+    toast(`${body.channel} settlement posted — payout ${usd(r.payout)}`)
+    document.getElementById('s-gross').value = ''
+    document.getElementById('s-refunds').value = ''
+    document.getElementById('s-fees').value = ''
+    syncPayout()
+    await render()
+  } catch (e) { toast(e.message, true) }
+})
+
+document.getElementById('h-add').addEventListener('click', () => document.getElementById('h-lines').append(lineRow()))
+document.getElementById('h-lines').addEventListener('click', (e) => {
+  if (e.target.classList.contains('h-del')) e.target.closest('.formrow').remove()
+})
+document.getElementById('h-post').addEventListener('click', async () => {
+  const lines = [...document.querySelectorAll('#h-lines .formrow')]
+    .map((r) => ({ sku: r.querySelector('.h-sku').value, qty: Number(r.querySelector('.h-qty').value) }))
+    .filter((l) => l.qty > 0)
+  if (!lines.length) return toast('add at least one line with units', true)
+  try {
+    const r = await api('/api/channel-shipments', {
+      method: 'POST',
+      body: JSON.stringify({
+        channel: document.getElementById('h-channel').value,
+        period_end: document.getElementById('h-end').value,
+        lines,
+      }),
+    })
+    toast(`${r.shipped_lines} line(s) shipped — COGS ${usd(r.cogs)}`)
+    document.getElementById('h-lines').replaceChildren(lineRow())
+    await render()
+  } catch (e) { toast(e.message, true) }
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

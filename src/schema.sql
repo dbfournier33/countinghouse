@@ -295,11 +295,32 @@ create table if not exists bills (
   number    text not null,
   vendor_id uuid not null references parties(id),
   po_id     uuid references purchase_orders(id),
-  kind      text not null check (kind in ('inventory', 'expense')),
+  kind      text not null,
   amount    numeric(18,2) not null check (amount > 0),
   status    text not null default 'open' check (status in ('open', 'paid')),
   bill_date date not null default current_date,
   paid_date date,
   created_at timestamptz not null default now(),
   unique (tenant_id, number)
+);
+alter table bills drop constraint if exists bills_kind_check;
+alter table bills add constraint bills_kind_check check (kind in ('inventory', 'expense', 'opening'));
+
+-- ===========================================================================
+-- D2C channels (decision #3): settlements are summarized financial events —
+-- one row per payout period per channel. Never per-order.
+-- ===========================================================================
+
+create table if not exists channel_settlements (
+  id           uuid primary key default gen_random_uuid(),
+  tenant_id    uuid not null references tenants(id),
+  channel      text not null,
+  period_start date not null,
+  period_end   date not null,
+  gross_sales  numeric(18,2) not null check (gross_sales >= 0),
+  refunds      numeric(18,2) not null default 0 check (refunds >= 0),
+  fees         numeric(18,2) not null default 0 check (fees >= 0),
+  payout       numeric(18,2) not null,
+  event_id     uuid not null references events(id),
+  created_at   timestamptz not null default now()
 );

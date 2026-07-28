@@ -19,12 +19,15 @@ export const COA: CoaAccount[] = [
   { code: '3100', name: "Owner's equity", kind: 'equity', normal: 'credit', qb: "Owner's Equity" },
   { code: '3900', name: 'Opening balances', kind: 'equity', normal: 'credit', qb: 'Opening Balance Equity' },
   { code: '4100', name: 'Revenue — product sales', kind: 'revenue', normal: 'credit', qb: 'Sales of Product Income' },
+  { code: '4150', name: 'Revenue — D2C channels', kind: 'revenue', normal: 'credit', qb: 'Sales of Product Income' },
+  { code: '4190', name: 'Refunds & allowances', kind: 'revenue', normal: 'debit', qb: 'Refunds-Allowances' },
   { code: '5110', name: 'Cost of goods sold', kind: 'expense', normal: 'debit', qb: 'Cost of Goods Sold' },
   { code: '5150', name: 'Inventory shrinkage & adjustments', kind: 'expense', normal: 'debit', qb: 'Inventory Shrinkage' },
   // Absorbed labor offsets the wages the customer pays through their payroll
   // provider — in QB-land that credit belongs against Payroll Expenses.
   { code: '5290', name: 'Direct labor absorbed', kind: 'expense', normal: 'credit', qb: 'Payroll Expenses' },
   { code: '6100', name: 'Operating expenses', kind: 'expense', normal: 'debit', qb: 'Operating Expenses' },
+  { code: '6200', name: 'Channel fees & processing', kind: 'expense', normal: 'debit', qb: 'Merchant Account Fees' },
 ]
 
 // '@inventory' resolves to 1310 or 1350 from the item's kind at posting time.

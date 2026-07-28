@@ -8,7 +8,15 @@
 // For AdjustmentMade the rule is written for the positive (found stock) case;
 // the engine flips debit/credit when qty_delta is negative.
 
-export type AmountSource = 'move_value' | 'payload_amount' | 'labor_value' | 'wip_drain'
+export type AmountSource =
+  | 'move_value'
+  | 'payload_amount'
+  | 'labor_value'
+  | 'wip_drain'
+  | 'settlement_gross'
+  | 'settlement_refunds'
+  | 'settlement_fees'
+  | 'settlement_payout'
 
 export interface RuleLine {
   account: string // account code, or '@inventory' (resolved from item kind)
@@ -64,5 +72,25 @@ export const POSTING_RULES: Record<string, RuleLine[]> = {
   AdjustmentMade: [
     { account: '@inventory', side: 'debit', source: 'move_value' },
     { account: '5150', side: 'credit', source: 'move_value' },
+  ],
+  // One payout period, one entry: cash in, fees and refunds recognized, gross
+  // revenue credited. Zero-amount lines are dropped by the engine.
+  ChannelSettlement: [
+    { account: '1110', side: 'debit', source: 'settlement_payout' },
+    { account: '6200', side: 'debit', source: 'settlement_fees' },
+    { account: '4190', side: 'debit', source: 'settlement_refunds' },
+    { account: '4150', side: 'credit', source: 'settlement_gross' },
+  ],
+  OpeningCashSet: [
+    { account: '1110', side: 'debit', source: 'payload_amount' },
+    { account: '3900', side: 'credit', source: 'payload_amount' },
+  ],
+  OpeningReceivableSet: [
+    { account: '1200', side: 'debit', source: 'payload_amount' },
+    { account: '3900', side: 'credit', source: 'payload_amount' },
+  ],
+  OpeningPayableSet: [
+    { account: '3900', side: 'debit', source: 'payload_amount' },
+    { account: '2100', side: 'credit', source: 'payload_amount' },
   ],
 }

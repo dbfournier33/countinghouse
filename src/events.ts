@@ -63,6 +63,31 @@ export const EventSchemas = {
     qty_delta: z.number().refine((v) => v !== 0, 'qty_delta must be non-zero'),
     reason: z.string().optional(),
   }),
+  ChannelSettlement: z
+    .object({
+      channel: z.string().min(1),
+      period_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      period_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      gross_sales: z.number().nonnegative(),
+      refunds: z.number().nonnegative().default(0),
+      fees: z.number().nonnegative().default(0),
+    })
+    .refine((v) => v.period_start <= v.period_end, 'period_start must be on or before period_end')
+    .refine(
+      (v) => v.gross_sales - v.refunds - v.fees >= 0,
+      'payout would be negative (refunds + fees exceed gross) — split the period or book a manual entry',
+    ),
+  OpeningCashSet: z.object({ amount: z.number().positive() }),
+  OpeningReceivableSet: z.object({
+    amount: z.number().positive(),
+    customer: z.string().optional(),
+    ref: z.string().optional(),
+  }),
+  OpeningPayableSet: z.object({
+    amount: z.number().positive(),
+    vendor: z.string().optional(),
+    ref: z.string().optional(),
+  }),
 } as const
 
 export type EventType = keyof typeof EventSchemas
@@ -333,6 +358,34 @@ export async function ingestTx(
         memo = `Payment received ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
         break
       }
+      case 'ChannelSettlement': {
+        const s = p as {
+          channel: string
+          period_start: string
+          period_end: string
+          gross_sales: number
+          refunds: number
+          fees: number
+        }
+        const payout = round2(s.gross_sales - s.refunds - s.fees)
+        memo = `${s.channel} settlement ${s.period_start} → ${s.period_end}: gross ${fmtUSD(s.gross_sales)} − fees ${fmtUSD(s.fees)} − refunds ${fmtUSD(s.refunds)} = payout ${fmtUSD(payout)}`
+        break
+      }
+      case 'OpeningCashSet': {
+        const { amount } = p as { amount: number }
+        memo = `Opening cash balance ${fmtUSD(amount)}`
+        break
+      }
+      case 'OpeningReceivableSet': {
+        const { amount, customer, ref } = p as { amount: number; customer?: string; ref?: string }
+        memo = `Opening receivable${customer ? ` — ${customer}` : ''} ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'OpeningPayableSet': {
+        const { amount, vendor, ref } = p as { amount: number; vendor?: string; ref?: string }
+        memo = `Opening payable${vendor ? ` — ${vendor}` : ''} ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
     }
 
     // --- posting: rules are data ------------------------------------------
@@ -349,15 +402,24 @@ export async function ingestTx(
         : ruleRow.rows[0].lines
 
     const amountFor = (source: RuleLine['source']): number => {
+      const s = p as { amount?: number; gross_sales?: number; refunds?: number; fees?: number }
       switch (source) {
         case 'move_value':
           return ctx.moveValue ?? 0
         case 'payload_amount':
-          return round2(num((p as { amount?: number }).amount))
+          return round2(num(s.amount))
         case 'labor_value':
           return ctx.laborValue ?? 0
         case 'wip_drain':
           return ctx.wipDrain ?? 0
+        case 'settlement_gross':
+          return round2(num(s.gross_sales))
+        case 'settlement_refunds':
+          return round2(num(s.refunds))
+        case 'settlement_fees':
+          return round2(num(s.fees))
+        case 'settlement_payout':
+          return round2(num(s.gross_sales) - num(s.refunds) - num(s.fees))
       }
     }
 
