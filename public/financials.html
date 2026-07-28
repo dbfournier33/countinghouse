@@ -76,7 +76,8 @@ async function render() {
   `))
 
   const row = (l, indent = false) =>
-    `<tr><td ${indent ? 'style="padding-left:22px"' : ''}>${l.name} <span class="code muted" style="font-size:11px">${l.code}</span></td>
+    `<tr><td ${indent ? 'style="padding-left:22px"' : ''}>${l.name}
+     <a class="code" href="/ledger.html?code=${l.code}" style="font-size:11px; color:var(--accent); text-decoration:none">${l.code}</a></td>
      <td class="num">${usd(l.amount)}</td></tr>`
   const totalRow = (label, amount, strong = false) =>
     `<tr class="${strong ? 'total' : ''}"><td style="font-weight:650">${label}</td><td class="num" style="font-weight:650">${usd(amount)}</td></tr>`

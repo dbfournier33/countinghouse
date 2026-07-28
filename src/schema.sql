@@ -147,6 +147,9 @@ create index if not exists idx_jlines_tenant_account on journal_lines (tenant_id
 -- ===========================================================================
 
 alter table items add column if not exists reorder_point numeric(18,4) not null default 0;
+-- D2C velocity (decision #3): forecast demand enters planning as a rate, not
+-- as orders. Two-week horizon applied in the planning view.
+alter table items add column if not exists weekly_forecast numeric(18,4) not null default 0;
 
 create table if not exists doc_counters (
   tenant_id uuid not null references tenants(id),

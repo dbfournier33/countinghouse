@@ -179,7 +179,7 @@ export function createApp(db: PGlite) {
       event_type: string
       seq: string
     }>(
-      `select je.entry_date, je.memo, jl.side, jl.amount, e.type as event_type, e.seq
+      `select je.entry_date::text as entry_date, je.memo, jl.side, jl.amount, e.type as event_type, e.seq
        from journal_lines jl
        join journal_entries je on je.id = jl.entry_id
        join events e on e.id = je.event_id

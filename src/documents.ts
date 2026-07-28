@@ -514,11 +514,17 @@ export interface PlanningRow {
   on_hand: number
   on_order: number
   in_production: number
+  order_demand: number
+  forecast_demand: number
+  weekly_forecast: number
   demand: number
   projected: number
   reorder_point: number
   suggestion: null | { action: 'buy' | 'make'; qty: number }
 }
+
+// Forecast horizon: how many weeks of the weekly rate count as demand.
+export const FORECAST_WEEKS = 2
 
 export async function planning(db: PGlite, tenantId: string): Promise<PlanningRow[]> {
   const items = await db.query<{
@@ -528,9 +534,10 @@ export async function planning(db: PGlite, tenantId: string): Promise<PlanningRo
     kind: string
     uom: string
     reorder_point: string
+    weekly_forecast: string
     on_hand: string
   }>(
-    `select i.id, i.sku, i.name, i.kind, i.uom, i.reorder_point,
+    `select i.id, i.sku, i.name, i.kind, i.uom, i.reorder_point, i.weekly_forecast,
             coalesce(ic.qty_on_hand, 0) as on_hand
      from items i
      left join item_costs ic on ic.item_id = i.id and ic.tenant_id = i.tenant_id
@@ -578,7 +585,10 @@ export async function planning(db: PGlite, tenantId: string): Promise<PlanningRo
     const on_hand = num(i.on_hand)
     const on_order = onOrderM.get(i.id) ?? 0
     const in_production = i.kind === 'raw' ? 0 : (inProdM.get(i.id) ?? 0)
-    const demand = round4((soM.get(i.id) ?? 0) + (woM.get(i.id) ?? 0))
+    const order_demand = round4((soM.get(i.id) ?? 0) + (woM.get(i.id) ?? 0))
+    const weekly_forecast = num(i.weekly_forecast)
+    const forecast_demand = round4(weekly_forecast * FORECAST_WEEKS)
+    const demand = round4(order_demand + forecast_demand)
     const projected = round4(on_hand + on_order + in_production - demand)
     const reorder_point = num(i.reorder_point)
     const deficit = round4(reorder_point - projected)
@@ -588,7 +598,8 @@ export async function planning(db: PGlite, tenantId: string): Promise<PlanningRo
         : null
     return {
       sku: i.sku, name: i.name, kind: i.kind, uom: i.uom,
-      on_hand, on_order, in_production, demand, projected, reorder_point, suggestion,
+      on_hand, on_order, in_production, order_demand, forecast_demand, weekly_forecast,
+      demand, projected, reorder_point, suggestion,
     }
   })
   return rows.sort((a, b) => Number(!!b.suggestion) - Number(!!a.suggestion) || a.sku.localeCompare(b.sku))

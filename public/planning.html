@@ -12,7 +12,7 @@
     <h2>Demand vs supply</h2>
     <table id="plan"></table>
   </section>
-  <footer>Projected = on hand + on order + in production − open demand. A suggestion appears when projected falls below the reorder point — one click creates the draft PO or work order. Single-level MRP-lite, on purpose.</footer>
+  <footer>Projected = on hand + on order + in production − demand, where demand = open orders + two weeks of the item's forecast rate (the D2C velocity line). A suggestion appears when projected falls below the reorder point — one click creates the draft PO or work order. Single-level MRP-lite, on purpose.</footer>
 </div>
 <script type="module">
 import { api, el, pageShell, qtyFmt, toast } from '/app.js'
@@ -28,8 +28,8 @@ async function render() {
   document.getElementById('plan').replaceChildren(el(`
     <thead><tr>
       <th>Item</th><th class="num">On hand</th><th class="num">On order</th>
-      <th class="num">In production</th><th class="num">Demand</th><th class="num">Projected</th>
-      <th class="num">Reorder pt</th><th>Suggestion</th>
+      <th class="num">In production</th><th class="num">Forecast/wk</th><th class="num">Demand</th>
+      <th class="num">Projected</th><th class="num">Reorder pt</th><th>Suggestion</th>
     </tr></thead>
     <tbody>${rows.map((r) => `
       <tr class="${r.suggestion ? 'suggest' : ''}">
@@ -37,7 +37,9 @@ async function render() {
         <td class="num">${qtyFmt(r.on_hand)} ${r.uom}</td>
         <td class="num">${r.on_order ? qtyFmt(r.on_order) : '<span class="muted">—</span>'}</td>
         <td class="num">${r.in_production ? qtyFmt(r.in_production) : '<span class="muted">—</span>'}</td>
-        <td class="num">${r.demand ? qtyFmt(r.demand) : '<span class="muted">—</span>'}</td>
+        <td class="num"><input class="qty f-wk" data-sku="${r.sku}" type="number" min="0" step="any"
+          value="${r.weekly_forecast || ''}" placeholder="0" style="width:70px" title="D2C velocity — 2 weeks count as demand" /></td>
+        <td class="num" title="orders ${qtyFmt(r.order_demand)} + forecast ${qtyFmt(r.forecast_demand)}">${r.demand ? qtyFmt(r.demand) : '<span class="muted">—</span>'}</td>
         <td class="num" style="font-weight:650">${qtyFmt(r.projected)}</td>
         <td class="num muted">${qtyFmt(r.reorder_point)}</td>
         <td>${r.suggestion
@@ -46,6 +48,18 @@ async function render() {
       </tr>`).join('')}
     </tbody>
   `))
+  document.querySelectorAll('.f-wk').forEach((inp) =>
+    inp.addEventListener('change', async () => {
+      try {
+        await api(`/api/items/${inp.dataset.sku}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ weekly_forecast: Number(inp.value) || 0 }),
+        })
+        toast(`${inp.dataset.sku}: forecast ${inp.value || 0}/wk — demand includes 2 weeks of it`)
+        await render()
+      } catch (e) { toast(e.message, true) }
+    }),
+  )
   document.querySelectorAll('button[data-sku]').forEach((b) =>
     b.addEventListener('click', async () => {
       b.disabled = true

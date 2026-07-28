@@ -342,11 +342,21 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
     return c.json({ sku: parentSku, lines: body.lines })
   }))
   app.patch('/api/items/:sku', wrap(async (c) => {
-    const body = z.object({ reorder_point: z.number().nonnegative() }).parse(await c.req.json())
-    const r = await db.query('update items set reorder_point = $3 where tenant_id = $1 and sku = $2 returning sku', [
-      c.var.tenantId, pid(c, 'sku'), body.reorder_point,
-    ])
+    const body = z
+      .object({
+        reorder_point: z.number().nonnegative().optional(),
+        weekly_forecast: z.number().nonnegative().optional(),
+      })
+      .refine((v) => v.reorder_point !== undefined || v.weekly_forecast !== undefined, 'nothing to update')
+      .parse(await c.req.json())
+    const r = await db.query(
+      `update items set
+         reorder_point = coalesce($3, reorder_point),
+         weekly_forecast = coalesce($4, weekly_forecast)
+       where tenant_id = $1 and sku = $2 returning sku`,
+      [c.var.tenantId, pid(c, 'sku'), body.reorder_point ?? null, body.weekly_forecast ?? null],
+    )
     if (r.rows.length === 0) return c.json({ error: `unknown item sku "${pid(c, 'sku')}"` }, 404)
-    return c.json({ sku: pid(c, 'sku'), reorder_point: body.reorder_point })
+    return c.json({ sku: pid(c, 'sku'), ...body })
   }))
 }

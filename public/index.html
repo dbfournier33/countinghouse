@@ -91,7 +91,7 @@ async function render() {
     <thead><tr><th></th><th>Account</th><th class="num">Debits</th><th class="num">Credits</th><th class="num">Balance</th></tr></thead>
     <tbody>
       ${tbRows.map((a) => `<tr>
-        <td class="code">${a.code}</td><td>${a.name}</td>
+        <td class="code"><a href="/ledger.html?code=${a.code}" style="color:var(--accent); text-decoration:none">${a.code}</a></td><td>${a.name}</td>
         <td class="num">${a.debits ? usd(a.debits) : '<span class="muted">—</span>'}</td>
         <td class="num">${a.credits ? usd(a.credits) : '<span class="muted">—</span>'}</td>
         <td class="num">${usd(a.balance)}</td></tr>`).join('')}

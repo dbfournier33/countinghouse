@@ -236,6 +236,27 @@ describe('planning', () => {
     expect(made.kind).toBe('work_order')
     expect((await planning(db, t)).find((r) => r.sku === 'BAR')!.suggestion).toBeNull()
   })
+
+  it('forecast rate adds two weeks of demand (the D2C velocity line)', async () => {
+    const t = await setupTenant()
+    const po = await createPurchaseOrder(db, t, {
+      vendor: 'Vendor Co',
+      lines: [{ sku: 'BAR', qty: 500, unit_cost: 0.4 }],
+    })
+    await issuePurchaseOrder(db, t, po.id)
+    await receivePurchaseOrder(db, t, po.id)
+
+    let bar = (await planning(db, t)).find((r) => r.sku === 'BAR')!
+    expect(bar.projected).toBe(500)
+    expect(bar.suggestion).toBeNull()
+
+    await db.query("update items set weekly_forecast = 200 where tenant_id = $1 and sku = 'BAR'", [t])
+    bar = (await planning(db, t)).find((r) => r.sku === 'BAR')!
+    expect(bar.forecast_demand).toBe(400) // 200/wk × 2 weeks
+    expect(bar.demand).toBe(400)
+    expect(bar.projected).toBe(100) // 500 − 400; reorder 200 → make 100
+    expect(bar.suggestion).toEqual({ action: 'make', qty: 100 })
+  })
 })
 
 describe('capacity', () => {

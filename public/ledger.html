@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Ledger</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <div class="formrow">
+      <h2 style="margin:0" id="title">Account ledger</h2>
+      <select id="account" style="margin-left:auto"></select>
+      <button class="small" id="export">Download CSV</button>
+    </div>
+    <table id="lines"></table>
+  </section>
+  <footer>Every line traces to exactly one event — this is the one place debits and credits are visible, built for your accountant. Click any code on the Dashboard or Financials to land here.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'financials',
+  title: 'Ledger',
+  subtitle: 'Account activity with running balance — the accountant view.',
+})
+
+let current = null
+
+async function render(code) {
+  const [tb, ledger] = await Promise.all([api('/api/trial-balance'), api(`/api/ledger/${code}`)])
+  current = ledger
+  document.getElementById('account').replaceChildren(el(
+    tb.accounts.map((a) =>
+      `<option value="${a.code}" ${a.code === code ? 'selected' : ''}>${a.code} — ${a.name}</option>`,
+    ).join(''),
+  ))
+  document.getElementById('title').textContent = `${ledger.code} · ${ledger.name}`
+  document.getElementById('lines').replaceChildren(el(`
+    <thead><tr><th>Date</th><th>Event</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+    <tbody>${ledger.lines.map((l) => `
+      <tr>
+        <td style="font-size:13px; white-space:nowrap">${l.date}</td>
+        <td><span class="pill">${l.event_type}</span></td>
+        <td style="font-size:13px">${l.memo}</td>
+        <td class="num">${l.side === 'debit' ? usd(l.amount) : '<span class="muted">—</span>'}</td>
+        <td class="num">${l.side === 'credit' ? usd(l.amount) : '<span class="muted">—</span>'}</td>
+        <td class="num">${usd(l.balance)}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="muted">no activity on this account</td></tr>'}
+      ${ledger.lines.length ? `<tr class="total"><td colspan="5">Balance (${ledger.normal_side}-normal)</td><td class="num">${usd(ledger.balance)}</td></tr>` : ''}
+    </tbody>
+  `))
+}
+
+document.getElementById('account').addEventListener('change', (e) => {
+  const code = e.target.value
+  history.replaceState(null, '', `/ledger.html?code=${code}`)
+  render(code).catch((err) => toast(err.message, true))
+})
+
+document.getElementById('export').addEventListener('click', () => {
+  if (!current) return
+  const esc = (v) => `"${String(v).replaceAll('"', '""')}"`
+  const rows = [
+    ['Date', 'Event', 'Memo', 'Debit', 'Credit', 'Balance'],
+    ...current.lines.map((l) => [
+      l.date, l.event_type, l.memo,
+      l.side === 'debit' ? l.amount.toFixed(2) : '',
+      l.side === 'credit' ? l.amount.toFixed(2) : '',
+      l.balance.toFixed(2),
+    ]),
+  ]
+  const blob = new Blob([rows.map((r) => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `ledger-${current.code}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+})
+
+const code = new URLSearchParams(location.search).get('code') ?? '1110'
+render(code).catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>
