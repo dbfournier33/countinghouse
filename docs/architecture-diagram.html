@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Architecture</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --surface: #fff; --ink: #1c2024; --ink-2: #5a636e; --ink-3: #8b939e;
+    --line: #e2e4df; --accent: #0b5d8f; --accent-bg: #eef4f8;
+    --spine: #123c5e; --spine-2: #dfe9f1;
+    --ledger: #135239; --ledger-bg: #e9f3ed;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 30px 24px 56px; }
+  h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--ink-2); margin: 4px 0 24px; font-size: 13.5px; }
+  .sub b { color: var(--ink); font-weight: 600; }
+
+  .row { display: flex; justify-content: center; }
+  .arrow { display: flex; flex-direction: column; align-items: center; color: var(--ink-3); padding: 2px 0; }
+  .arrow svg { display: block; }
+  .arrow .lbl { font-size: 11.5px; color: var(--ink-3); margin: 1px 0 2px; }
+
+  .surfaces { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; width: 100%; }
+  .chip { background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+    padding: 9px 6px 8px; text-align: center; }
+  .chip .t { font-weight: 600; font-size: 12.5px; }
+  .chip .p { font: 600 10px/1 var(--mono); color: var(--ink-3); margin-top: 4px; }
+  .caption { text-align: center; font-size: 11.5px; color: var(--ink-3); margin-top: 6px; }
+
+  .band { width: 100%; text-align: center; border-radius: 10px; padding: 11px 14px;
+    background: var(--surface); border: 1px solid var(--line); }
+  .band .t { font-weight: 650; font-size: 13.5px; }
+  .band .d { color: var(--ink-2); font-size: 12px; margin-top: 2px; }
+  .band.api { border-color: color-mix(in srgb, var(--accent) 45%, white); background: var(--accent-bg); }
+  .band.api .t { color: var(--accent); }
+
+  .band.events { background: var(--spine); border-color: var(--spine); color: #fff; padding: 13px 16px; }
+  .band.events .t { font-size: 14px; }
+  .band.events .d { color: #b8cbdc; font-family: var(--mono); font-size: 11px; margin-top: 5px; letter-spacing: 0.01em; }
+  .band.events .tag { display: inline-block; font: 600 10px/1 var(--mono); color: #cfe0ee;
+    border: 1px solid #3d6285; border-radius: 99px; padding: 3px 8px; margin-top: 8px; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: 100%; }
+  .lane { display: flex; flex-direction: column; align-items: center; }
+  .node { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 14px; text-align: center; }
+  .node .t { font-weight: 650; font-size: 13px; }
+  .node .d { color: var(--ink-2); font-size: 12px; margin-top: 2px; }
+  .node.store { border-style: dashed; }
+  .node.ledger { background: var(--ledger-bg); border: 1px solid color-mix(in srgb, var(--ledger) 40%, white); }
+  .node.ledger .t { color: var(--ledger); }
+
+  .txn { position: relative; margin: 18px 0 0; border: 1.5px dashed color-mix(in srgb, var(--accent) 38%, white);
+    border-radius: 14px; padding: 16px 16px 18px; }
+  .txn-label { position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+    background: var(--bg); color: var(--accent); font: 600 10.5px/1 var(--mono);
+    padding: 2px 10px; letter-spacing: 0.06em; white-space: nowrap; }
+
+  .phases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 26px; }
+  .ph { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
+  .ph .n { font: 600 10px/1 var(--mono); color: var(--accent); }
+  .ph .t { font-weight: 600; font-size: 12.5px; margin-top: 4px; }
+  .ph .d { color: var(--ink-3); font-size: 11.5px; margin-top: 2px; }
+  .foot { color: var(--ink-3); font-size: 12px; margin-top: 18px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Simple ERP — the event spine</h1>
+  <p class="sub"><b>Operational documents produce events; events produce inventory moves and journal entries; everything else is a view.</b>
+  Modules are thin surfaces over one spine — financials are a byproduct of operations, never reconciled to them.</p>
+
+  <div class="row surfaces">
+    <div class="chip"><div class="t">Sourcing</div><div class="p">PHASE 1</div></div>
+    <div class="chip"><div class="t">Inventory</div><div class="p">PHASE 1</div></div>
+    <div class="chip"><div class="t">Planning</div><div class="p">PHASE 1</div></div>
+    <div class="chip"><div class="t">Capacity</div><div class="p">PHASE 1</div></div>
+    <div class="chip"><div class="t">Finance</div><div class="p">PHASE 2</div></div>
+    <div class="chip"><div class="t">Time &amp; People</div><div class="p">PHASE 3</div></div>
+  </div>
+  <div class="caption">Surfaces hold no business logic — they read projections and write events. No surface talks to another surface.</div>
+
+  <div class="arrow">
+    <svg width="14" height="22" viewBox="0 0 14 22"><path d="M7 0v16m0 0l-5-5m5 5l5-5" stroke="#8b939e" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+  </div>
+
+  <div class="row"><div class="band api">
+    <div class="t">Typed API — the only way in</div>
+    <div class="d">the SPA, the AI onboarding importers, and MCP agents all use the same contract</div>
+  </div></div>
+
+  <div class="txn">
+    <span class="txn-label">ONE TRANSACTION — NO PARTIAL STATES, EVER</span>
+
+    <div class="row"><div class="band events">
+      <div class="t">Operational event log — append-only facts</div>
+      <div class="d">GoodsReceived · MaterialIssued · TimeLogged · ProductionCompleted · GoodsShipped<br/>
+      BillPosted · InvoiceIssued · PaymentMade/Received · AdjustmentMade</div>
+      <span class="tag">corrections are reversing events — audit trail by construction</span>
+    </div></div>
+
+    <div class="split" style="margin-top:14px">
+      <div class="lane">
+        <div class="node"><div class="t">Costing</div>
+          <div class="d">moving average per item · WIP accumulation per work order</div></div>
+        <div class="arrow"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v12m0 0l-5-5m5 5l5-5" stroke="#8b939e" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></div>
+        <div class="node store"><div class="t">Inventory moves</div>
+          <div class="d">costed, immutable</div></div>
+      </div>
+      <div class="lane">
+        <div class="node"><div class="t">Posting engine</div>
+          <div class="d">rules as data: event → debit/credit lines</div></div>
+        <div class="arrow"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v12m0 0l-5-5m5 5l5-5" stroke="#8b939e" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></div>
+        <div class="node ledger"><div class="t">Double-entry ledger</div>
+          <div class="d">journal entries · periods · close — invisible until you open the accountant view</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="split" style="margin-top:14px">
+    <div class="lane">
+      <div class="arrow" style="margin-top:-6px"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v12m0 0l-5-5m5 5l5-5" stroke="#8b939e" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></div>
+      <div class="node"><div class="t">Operational truth</div>
+        <div class="d">on-hand · WIP · valuation · job cost</div></div>
+    </div>
+    <div class="lane">
+      <div class="arrow" style="margin-top:-6px"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v12m0 0l-5-5m5 5l5-5" stroke="#8b939e" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></div>
+      <div class="node"><div class="t">Financial truth</div>
+        <div class="d">trial balance · P&amp;L · balance sheet — always current, nothing synced</div></div>
+    </div>
+  </div>
+
+  <div class="phases">
+    <div class="ph"><div class="n">PHASE 0 — BUILT</div><div class="t">Kernel</div>
+      <div class="d">spine · posting engine · ledger · costing · typed API</div></div>
+    <div class="ph"><div class="n">PHASE 1</div><div class="t">Ops loop</div>
+      <div class="d">documents (PO/SO/WO) · planning screen · capacity board</div></div>
+    <div class="ph"><div class="n">PHASE 2</div><div class="t">Finance surface</div>
+      <div class="d">AR/AP · bank feeds · close · statements · QuickBooks bridge</div></div>
+    <div class="ph"><div class="n">PHASE 3</div><div class="t">People</div>
+      <div class="d">time · roster · capacity calendars · payroll integrated out</div></div>
+  </div>
+
+  <div class="foot">TypeScript · Node · Postgres — one modular monolith, one database, one deployable · US-first, single entity, single currency in v1</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Kernel</title>
+<style>
+  :root {
+    --bg: #f6f6f3;
+    --surface: #ffffff;
+    --ink: #1c2024;
+    --ink-2: #5a636e;
+    --ink-3: #8b939e;
+    --line: #e5e7e2;
+    --accent: #0b5d8f;
+    --good: #156f46;
+    --good-bg: #e8f4ec;
+    --bad: #a03123;
+    --bad-bg: #f9ece9;
+    --chip: #eef1f4;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 24px 64px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+  h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .badge {
+    font: 600 11px/1 var(--mono); color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, white); border-radius: 99px;
+    padding: 4px 9px; background: color-mix(in srgb, var(--accent) 7%, white);
+  }
+  .tenant { color: var(--ink-2); font-size: 14px; margin-left: auto; }
+  .sub { color: var(--ink-2); margin: 0 0 22px; font-size: 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; }
+  .tile .k { font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .v { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .n { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+  .tile.ok .v { color: var(--good); font-size: 20px; }
+  .cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; align-items: start; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+  section.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
+  h2 { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); margin: 0 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th.num, td.num { text-align: right; }
+  td { padding: 6px 8px; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); font-size: 14px; }
+  tr:last-child td { border-bottom: none; }
+  td .muted, .muted { color: var(--ink-3); }
+  td.code { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+  tr.total td { border-top: 1.5px solid var(--ink); border-bottom: none; font-weight: 650; }
+  .pill { display: inline-block; font: 600 10.5px/1 var(--mono); background: var(--chip); color: var(--ink-2); border-radius: 5px; padding: 3px 6px; }
+  .feed { display: flex; flex-direction: column; }
+  .ev { display: grid; grid-template-columns: 44px 190px 1fr; gap: 10px; padding: 9px 4px; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); align-items: baseline; }
+  .ev:last-child { border-bottom: none; }
+  .ev .seq { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .ev .memo { font-size: 14px; }
+  .ev .jl { font-family: var(--mono); font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+  .ev .jl b { color: var(--ink); font-weight: 600; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: 600 13px/1 inherit; color: var(--accent); background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, white); border-radius: 8px;
+    padding: 9px 13px; cursor: pointer;
+  }
+  button:hover { background: color-mix(in srgb, var(--accent) 6%, white); }
+  #msg { font-size: 13px; }
+  #msg.err { color: var(--bad); }
+  #msg.ok { color: var(--good); }
+  details { margin-top: 4px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+  footer { color: var(--ink-3); font-size: 12.5px; margin-top: 18px; }
+  footer code { font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Simple ERP</h1>
+    <span class="badge">PHASE 0 KERNEL</span>
+    <span class="tenant" id="tenant">Big Sur Provisions</span>
+  </header>
+  <p class="sub">Events in, correct books out — no accounting steps in between. Every number below is a live read of the ledger and projections.</p>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>Live demo — post an event, watch the books move</h2>
+    <div class="actions">
+      <button data-act="ship">Ship 100 bars (SO-2002)</button>
+      <button data-act="receive">Receive 50 kg oats (PO-1003)</button>
+      <button data-act="wo">Run a small work order</button>
+      <span id="msg"></span>
+    </div>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Trial balance</h2>
+      <table id="tb"></table>
+    </section>
+    <div>
+      <section class="card">
+        <h2>Inventory on hand</h2>
+        <table id="inv"></table>
+      </section>
+      <section class="card">
+        <h2>Open work-in-process</h2>
+        <table id="wip"></table>
+      </section>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Event stream → journal entries</h2>
+    <div class="feed" id="feed"></div>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>Posting rules (as stored — rules are data, not code)</summary>
+      <table id="rules" style="margin-top:10px"></table>
+    </details>
+  </section>
+
+  <footer>
+    One write path: <code>POST /api/events</code> · append-only event log · moving-average costing ·
+    double-entry underneath · demo tenant <code>dev-bigsur</code>
+  </footer>
+</div>
+
+<script>
+const TOKEN = 'dev-bigsur'
+const usd = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const qty = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
+  })
+  const body = await res.json()
+  if (!res.ok) throw new Error(body.error ?? res.statusText)
+  return body
+}
+
+function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content }
+
+async function render() {
+  const [tb, inv, events, rules] = await Promise.all([
+    api('/api/trial-balance'), api('/api/inventory'), api('/api/events?limit=40'), api('/api/posting-rules'),
+  ])
+
+  const cash = tb.accounts.find((a) => a.code === '1110')?.balance ?? 0
+  const rev = tb.accounts.find((a) => a.code === '4100')?.balance ?? 0
+  const cogs = tb.accounts.find((a) => a.code === '5110')?.balance ?? 0
+  document.getElementById('tiles').replaceChildren(el(`
+    <div class="tile ok"><div class="k">Trial balance</div>
+      <div class="v">${tb.balanced ? '✓ Balanced' : '✗ Out of balance'}</div>
+      <div class="n">${usd(tb.total_debits)} = ${usd(tb.total_credits)}</div></div>
+    <div class="tile"><div class="k">Cash</div><div class="v">${usd(cash)}</div><div class="n">1110</div></div>
+    <div class="tile"><div class="k">Inventory value</div><div class="v">${usd(inv.total_value)}</div>
+      <div class="n">${inv.items.length} items, moving average</div></div>
+    <div class="tile"><div class="k">Gross margin</div><div class="v">${usd(rev - cogs)}</div>
+      <div class="n">revenue ${usd(rev)} − COGS ${usd(cogs)}</div></div>
+  `))
+
+  const tbRows = tb.accounts.filter((a) => a.debits || a.credits)
+  document.getElementById('tb').replaceChildren(el(`
+    <thead><tr><th></th><th>Account</th><th class="num">Debits</th><th class="num">Credits</th><th class="num">Balance</th></tr></thead>
+    <tbody>
+      ${tbRows.map((a) => `<tr>
+        <td class="code">${a.code}</td><td>${a.name}</td>
+        <td class="num">${a.debits ? usd(a.debits) : '<span class="muted">—</span>'}</td>
+        <td class="num">${a.credits ? usd(a.credits) : '<span class="muted">—</span>'}</td>
+        <td class="num">${usd(a.balance)}</td></tr>`).join('')}
+      <tr class="total"><td></td><td>Totals</td>
+        <td class="num">${usd(tb.total_debits)}</td><td class="num">${usd(tb.total_credits)}</td><td class="num"></td></tr>
+    </tbody>
+  `))
+
+  document.getElementById('inv').replaceChildren(el(`
+    <thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Avg cost</th><th class="num">Value</th></tr></thead>
+    <tbody>${inv.items.map((i) => `<tr>
+      <td>${i.name}<br /><span class="muted" style="font-size:12px">${i.sku} · ${i.kind}</span></td>
+      <td class="num">${qty(i.qty)} ${i.uom}</td>
+      <td class="num">${i.avg_cost.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 })}</td>
+      <td class="num">${usd(i.value)}</td></tr>`).join('')}</tbody>
+  `))
+
+  const wipRows = inv.open_wip.length
+    ? inv.open_wip.map((w) => `<tr><td class="code">${w.work_order}</td><td class="num">${usd(w.accumulated_cost)}</td></tr>`).join('')
+    : '<tr><td class="muted">No open jobs — all WIP flowed to finished goods</td><td></td></tr>'
+  document.getElementById('wip').replaceChildren(el(`
+    <thead><tr><th>Work order</th><th class="num">Accumulated cost</th></tr></thead><tbody>${wipRows}</tbody>
+  `))
+
+  document.getElementById('feed').replaceChildren(el(events.map((e) => `
+    <div class="ev">
+      <span class="seq">#${e.seq}</span>
+      <span><span class="pill">${e.type}</span></span>
+      <span>
+        <div class="memo">${e.memo ?? '<span class="muted">(no posting)</span>'}</div>
+        ${e.journal_lines.length ? `<div class="jl">${e.journal_lines
+          .map((l) => `${l.side === 'debit' ? 'DR' : 'CR'} ${l.code} ${l.name} <b>${usd(l.amount)}</b>`)
+          .join(' &nbsp;·&nbsp; ')}</div>` : ''}
+      </span>
+    </div>`).join('')))
+
+  document.getElementById('rules').replaceChildren(el(`
+    <thead><tr><th>Event</th><th>Lines</th></tr></thead>
+    <tbody>${rules.map((r) => `<tr>
+      <td class="code">${r.event_type}</td>
+      <td style="font-family:var(--mono);font-size:12px">${r.lines
+        .map((l) => `${l.side === 'debit' ? 'DR' : 'CR'} ${l.account} ← ${l.source}`)
+        .join(' &nbsp;·&nbsp; ')}</td></tr>`).join('')}</tbody>
+  `))
+}
+
+const ACTIONS = {
+  ship: [{ type: 'GoodsShipped', payload: { sku: 'BAR-OG', qty: 100, ref: 'SO-2002' } }],
+  receive: [{ type: 'GoodsReceived', payload: { sku: 'OATS', qty: 50, unit_cost: 2.55, ref: 'PO-1003' } }],
+  wo: [
+    { type: 'MaterialIssued', payload: { sku: 'OATS', qty: 30, work_order: 'WO-1002' } },
+    { type: 'MaterialIssued', payload: { sku: 'HONEY', qty: 10, work_order: 'WO-1002' } },
+    { type: 'MaterialIssued', payload: { sku: 'WRAP', qty: 600, work_order: 'WO-1002' } },
+    { type: 'TimeLogged', payload: { hours: 1.5, loaded_rate: 38, work_order: 'WO-1002', person: 'Maya Torres' } },
+    { type: 'ProductionCompleted', payload: { sku: 'BAR-OG', qty: 600, work_order: 'WO-1002' } },
+  ],
+}
+document.querySelectorAll('button[data-act]').forEach((b) =>
+  b.addEventListener('click', async () => {
+    const msg = document.getElementById('msg')
+    msg.className = ''
+    msg.textContent = 'posting…'
+    try {
+      for (const evt of ACTIONS[b.dataset.act]) await api('/api/events', { method: 'POST', body: JSON.stringify(evt) })
+      await render()
+      msg.className = 'ok'
+      msg.textContent = 'posted — books updated'
+    } catch (e) {
+      msg.className = 'err'
+      msg.textContent = e.message
+    }
+  }),
+)
+
+render().catch((e) => {
+  document.getElementById('tiles').replaceChildren(
+    el(`<div class="tile"><div class="k">Error</div><div class="n">${e.message} — did you run npm run seed?</div></div>`),
+  )
+})
+</script>
+</body>
+</html>

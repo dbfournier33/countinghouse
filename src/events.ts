@@ -1,0 +1,369 @@
+import type { PGlite, Transaction } from '@electric-sql/pglite'
+import { z } from 'zod'
+import { inventoryAccountFor } from './coa.js'
+import { fmtUSD, num, round2, round6 } from './money.js'
+import type { RuleLine } from './rules.js'
+
+// ---------------------------------------------------------------------------
+// Event contracts
+// ---------------------------------------------------------------------------
+
+export const EventSchemas = {
+  GoodsReceived: z.object({
+    sku: z.string().min(1),
+    qty: z.number().positive(),
+    unit_cost: z.number().nonnegative(),
+    ref: z.string().optional(),
+  }),
+  BillPosted: z.object({
+    amount: z.number().positive(),
+    vendor: z.string().optional(),
+    ref: z.string().optional(),
+  }),
+  PaymentMade: z.object({ amount: z.number().positive(), ref: z.string().optional() }),
+  MaterialIssued: z.object({
+    sku: z.string().min(1),
+    qty: z.number().positive(),
+    work_order: z.string().min(1),
+  }),
+  TimeLogged: z.object({
+    hours: z.number().positive(),
+    loaded_rate: z.number().positive(),
+    work_order: z.string().min(1),
+    person: z.string().optional(),
+  }),
+  ProductionCompleted: z.object({
+    sku: z.string().min(1),
+    qty: z.number().positive(),
+    work_order: z.string().min(1),
+  }),
+  GoodsShipped: z.object({
+    sku: z.string().min(1),
+    qty: z.number().positive(),
+    ref: z.string().optional(),
+  }),
+  InvoiceIssued: z.object({
+    amount: z.number().positive(),
+    customer: z.string().optional(),
+    ref: z.string().optional(),
+  }),
+  PaymentReceived: z.object({ amount: z.number().positive(), ref: z.string().optional() }),
+  AdjustmentMade: z.object({
+    sku: z.string().min(1),
+    qty_delta: z.number().refine((v) => v !== 0, 'qty_delta must be non-zero'),
+    reason: z.string().optional(),
+  }),
+} as const
+
+export type EventType = keyof typeof EventSchemas
+
+export class KernelError extends Error {
+  constructor(message: string, public status = 422) {
+    super(message)
+  }
+}
+
+export interface IngestResult {
+  event: { id: string; seq: number; type: EventType; occurred_at: string; payload: Record<string, unknown> }
+  moves: Array<{ sku: string; direction: 'in' | 'out'; qty: number; unit_cost: number; value: number }>
+  journal: null | {
+    id: string
+    memo: string
+    lines: Array<{ code: string; account: string; side: 'debit' | 'credit'; amount: number }>
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+interface ItemRow {
+  id: string
+  sku: string
+  name: string
+  kind: string
+  uom: string
+}
+
+interface PostingCtx {
+  moveValue?: number
+  laborValue?: number
+  wipDrain?: number
+  item?: ItemRow
+  flipSides?: boolean
+}
+
+async function getItem(tx: Transaction, tenantId: string, sku: string): Promise<ItemRow> {
+  const r = await tx.query<ItemRow>(
+    'select id, sku, name, kind, uom from items where tenant_id = $1 and sku = $2',
+    [tenantId, sku],
+  )
+  if (!r.rows[0]) throw new KernelError(`unknown item sku "${sku}"`)
+  return r.rows[0]
+}
+
+async function getCost(tx: Transaction, tenantId: string, itemId: string) {
+  const r = await tx.query<{ qty_on_hand: string; avg_cost: string }>(
+    "select qty_on_hand, avg_cost from item_costs where tenant_id = $1 and item_id = $2 and location_code = 'MAIN'",
+    [tenantId, itemId],
+  )
+  return r.rows[0]
+    ? { qty: num(r.rows[0].qty_on_hand), avg: num(r.rows[0].avg_cost) }
+    : { qty: 0, avg: 0 }
+}
+
+async function setCost(tx: Transaction, tenantId: string, itemId: string, qty: number, avg: number) {
+  await tx.query(
+    `insert into item_costs (tenant_id, item_id, location_code, qty_on_hand, avg_cost, updated_at)
+     values ($1, $2, 'MAIN', $3, $4, now())
+     on conflict (tenant_id, item_id, location_code)
+     do update set qty_on_hand = $3, avg_cost = $4, updated_at = now()`,
+    [tenantId, itemId, qty, avg],
+  )
+}
+
+async function recordMove(
+  tx: Transaction,
+  tenantId: string,
+  eventId: string,
+  item: ItemRow,
+  direction: 'in' | 'out',
+  qty: number,
+  unitCost: number,
+  value: number,
+): Promise<IngestResult['moves'][number]> {
+  await tx.query(
+    `insert into inventory_moves (tenant_id, event_id, item_id, direction, qty, unit_cost, value)
+     values ($1, $2, $3, $4, $5, $6, $7)`,
+    [tenantId, eventId, item.id, direction, qty, unitCost, value],
+  )
+  return { sku: item.sku, direction, qty, unit_cost: unitCost, value }
+}
+
+async function addToWip(tx: Transaction, tenantId: string, workOrder: string, value: number) {
+  await tx.query(
+    `insert into wip_jobs (tenant_id, work_order, accumulated_cost, updated_at)
+     values ($1, $2, $3, now())
+     on conflict (tenant_id, work_order)
+     do update set accumulated_cost = wip_jobs.accumulated_cost + $3, updated_at = now()`,
+    [tenantId, workOrder, value],
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The ingest pipeline: one transaction = event + inventory effect + posting.
+// This function IS the kernel: everything else in the system is a view.
+// ---------------------------------------------------------------------------
+
+export async function ingest(
+  db: PGlite,
+  tenantId: string,
+  input: { type: EventType; payload: unknown; occurred_at?: string },
+): Promise<IngestResult> {
+  const schema = EventSchemas[input.type]
+  if (!schema) throw new KernelError(`unknown event type "${input.type}"`, 400)
+  const p = schema.parse(input.payload) as Record<string, unknown>
+
+  return db.transaction(async (tx) => {
+    const ev = await tx.query<{ id: string; seq: string; occurred_at: string }>(
+      `insert into events (tenant_id, type, occurred_at, payload)
+       values ($1, $2, coalesce($3::timestamptz, now()), $4)
+       returning id, seq, occurred_at`,
+      [tenantId, input.type, input.occurred_at ?? null, JSON.stringify(p)],
+    )
+    const eventId = ev.rows[0].id
+
+    const ctx: PostingCtx = {}
+    const moves: IngestResult['moves'] = []
+    let memo = ''
+
+    switch (input.type) {
+      case 'GoodsReceived': {
+        const { sku, qty, unit_cost, ref } = p as { sku: string; qty: number; unit_cost: number; ref?: string }
+        const item = await getItem(tx, tenantId, sku)
+        const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
+        const value = round2(qty * unit_cost)
+        const newQty = q0 + qty
+        const newAvg = round6((q0 * a0 + qty * unit_cost) / newQty)
+        await setCost(tx, tenantId, item.id, newQty, newAvg)
+        moves.push(await recordMove(tx, tenantId, eventId, item, 'in', qty, unit_cost, value))
+        ctx.moveValue = value
+        ctx.item = item
+        memo = `Received ${qty} ${item.uom} ${item.name} @ ${fmtUSD(unit_cost)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'MaterialIssued': {
+        const { sku, qty, work_order } = p as { sku: string; qty: number; work_order: string }
+        const item = await getItem(tx, tenantId, sku)
+        const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
+        if (qty > q0) throw new KernelError(`insufficient stock of ${sku}: on hand ${q0}, requested ${qty}`)
+        const value = round2(qty * a0)
+        await setCost(tx, tenantId, item.id, q0 - qty, a0)
+        moves.push(await recordMove(tx, tenantId, eventId, item, 'out', qty, a0, value))
+        await addToWip(tx, tenantId, work_order, value)
+        ctx.moveValue = value
+        ctx.item = item
+        memo = `Issued ${qty} ${item.uom} ${item.name} to ${work_order}`
+        break
+      }
+      case 'TimeLogged': {
+        const { hours, loaded_rate, work_order, person } = p as {
+          hours: number
+          loaded_rate: number
+          work_order: string
+          person?: string
+        }
+        const value = round2(hours * loaded_rate)
+        await addToWip(tx, tenantId, work_order, value)
+        ctx.laborValue = value
+        memo = `${hours}h ${person ?? 'direct labor'} @ ${fmtUSD(loaded_rate)}/h on ${work_order}`
+        break
+      }
+      case 'ProductionCompleted': {
+        const { sku, qty, work_order } = p as { sku: string; qty: number; work_order: string }
+        const item = await getItem(tx, tenantId, sku)
+        const job = await tx.query<{ accumulated_cost: string }>(
+          'select accumulated_cost from wip_jobs where tenant_id = $1 and work_order = $2',
+          [tenantId, work_order],
+        )
+        const cost = job.rows[0] ? round2(num(job.rows[0].accumulated_cost)) : 0
+        if (cost > 0) {
+          await tx.query(
+            'update wip_jobs set accumulated_cost = 0, updated_at = now() where tenant_id = $1 and work_order = $2',
+            [tenantId, work_order],
+          )
+        }
+        const unit = qty > 0 ? round6(cost / qty) : 0
+        const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
+        const newQty = q0 + qty
+        const newAvg = round6((q0 * a0 + cost) / newQty)
+        await setCost(tx, tenantId, item.id, newQty, newAvg)
+        moves.push(await recordMove(tx, tenantId, eventId, item, 'in', qty, unit, cost))
+        ctx.wipDrain = cost
+        ctx.item = item
+        memo = `Completed ${qty} ${item.uom} ${item.name} on ${work_order} (unit cost ${fmtUSD(unit)})`
+        break
+      }
+      case 'GoodsShipped': {
+        const { sku, qty, ref } = p as { sku: string; qty: number; ref?: string }
+        const item = await getItem(tx, tenantId, sku)
+        const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
+        if (qty > q0) throw new KernelError(`insufficient stock of ${sku}: on hand ${q0}, requested ${qty}`)
+        const value = round2(qty * a0)
+        await setCost(tx, tenantId, item.id, q0 - qty, a0)
+        moves.push(await recordMove(tx, tenantId, eventId, item, 'out', qty, a0, value))
+        ctx.moveValue = value
+        ctx.item = item
+        memo = `Shipped ${qty} ${item.uom} ${item.name}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'AdjustmentMade': {
+        const { sku, qty_delta, reason } = p as { sku: string; qty_delta: number; reason?: string }
+        const item = await getItem(tx, tenantId, sku)
+        const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
+        const absQty = Math.abs(qty_delta)
+        if (qty_delta < 0 && absQty > q0)
+          throw new KernelError(`insufficient stock of ${sku}: on hand ${q0}, adjusting by ${qty_delta}`)
+        const value = round2(absQty * a0)
+        await setCost(tx, tenantId, item.id, q0 + qty_delta, a0)
+        moves.push(
+          await recordMove(tx, tenantId, eventId, item, qty_delta > 0 ? 'in' : 'out', absQty, a0, value),
+        )
+        ctx.moveValue = value
+        ctx.item = item
+        ctx.flipSides = qty_delta < 0
+        memo = `Adjusted ${item.name} by ${qty_delta} ${item.uom}${reason ? ` — ${reason}` : ''}`
+        break
+      }
+      case 'BillPosted': {
+        const { amount, vendor, ref } = p as { amount: number; vendor?: string; ref?: string }
+        memo = `Vendor bill${vendor ? ` from ${vendor}` : ''} ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'PaymentMade': {
+        const { amount, ref } = p as { amount: number; ref?: string }
+        memo = `Payment made ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'InvoiceIssued': {
+        const { amount, customer, ref } = p as { amount: number; customer?: string; ref?: string }
+        memo = `Invoiced${customer ? ` ${customer}` : ''} ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'PaymentReceived': {
+        const { amount, ref } = p as { amount: number; ref?: string }
+        memo = `Payment received ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+    }
+
+    // --- posting: rules are data ------------------------------------------
+    const ruleRow = await tx.query<{ lines: RuleLine[] | string }>(
+      `select lines from posting_rules
+       where tenant_id = $1 and event_type = $2
+       order by version desc limit 1`,
+      [tenantId, input.type],
+    )
+    if (!ruleRow.rows[0]) throw new KernelError(`no posting rule for ${input.type}`, 500)
+    const ruleLines: RuleLine[] =
+      typeof ruleRow.rows[0].lines === 'string'
+        ? JSON.parse(ruleRow.rows[0].lines)
+        : ruleRow.rows[0].lines
+
+    const amountFor = (source: RuleLine['source']): number => {
+      switch (source) {
+        case 'move_value':
+          return ctx.moveValue ?? 0
+        case 'payload_amount':
+          return round2(num((p as { amount?: number }).amount))
+        case 'labor_value':
+          return ctx.laborValue ?? 0
+        case 'wip_drain':
+          return ctx.wipDrain ?? 0
+      }
+    }
+
+    let journal: IngestResult['journal'] = null
+    const postable = ruleLines
+      .map((l) => ({ ...l, amount: amountFor(l.source) }))
+      .filter((l) => l.amount > 0)
+
+    if (postable.length > 0) {
+      const je = await tx.query<{ id: string }>(
+        `insert into journal_entries (tenant_id, event_id, entry_date, memo)
+         values ($1, $2, (coalesce($3::timestamptz, now()))::date, $4) returning id`,
+        [tenantId, eventId, input.occurred_at ?? null, memo],
+      )
+      const entryId = je.rows[0].id
+      const lines: NonNullable<IngestResult['journal']>['lines'] = []
+      for (const l of postable) {
+        const code = l.account === '@inventory' ? inventoryAccountFor(ctx.item?.kind ?? 'raw') : l.account
+        const side = ctx.flipSides ? (l.side === 'debit' ? 'credit' : 'debit') : l.side
+        const acct = await tx.query<{ id: string; name: string }>(
+          'select id, name from accounts where tenant_id = $1 and code = $2',
+          [tenantId, code],
+        )
+        if (!acct.rows[0]) throw new KernelError(`posting rule references unknown account ${code}`, 500)
+        await tx.query(
+          `insert into journal_lines (tenant_id, entry_id, account_id, side, amount)
+           values ($1, $2, $3, $4, $5)`,
+          [tenantId, entryId, acct.rows[0].id, side, l.amount],
+        )
+        lines.push({ code, account: acct.rows[0].name, side, amount: l.amount })
+      }
+      journal = { id: entryId, memo, lines }
+    }
+
+    return {
+      event: {
+        id: eventId,
+        seq: Number(ev.rows[0].seq),
+        type: input.type,
+        occurred_at: String(ev.rows[0].occurred_at),
+        payload: p,
+      },
+      moves,
+      journal,
+    }
+  })
+}

@@ -1,0 +1,137 @@
+-- Simple ERP kernel schema (Postgres dialect; runs identically on PGlite in dev).
+-- Spine: documents will come in Phase 1 — the kernel is events → moves + ledger.
+
+create table if not exists tenants (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  token      text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists parties (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  name       text not null,
+  roles      text[] not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists locations (
+  id        uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id),
+  code      text not null,
+  name      text not null,
+  kind      text not null check (kind in ('warehouse', 'work_center')),
+  unique (tenant_id, code)
+);
+
+create table if not exists items (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  sku        text not null,
+  name       text not null,
+  kind       text not null check (kind in ('raw', 'subassembly', 'finished', 'service')),
+  uom        text not null default 'ea',
+  created_at timestamptz not null default now(),
+  unique (tenant_id, sku)
+);
+
+create table if not exists accounts (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  code        text not null,
+  name        text not null,
+  kind        text not null check (kind in ('asset', 'liability', 'equity', 'revenue', 'expense')),
+  normal_side text not null check (normal_side in ('debit', 'credit')),
+  unique (tenant_id, code)
+);
+
+-- The append-only operational event log. Corrections are new (reversing) events.
+create table if not exists events (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  seq         bigint generated always as identity,
+  type        text not null,
+  occurred_at timestamptz not null default now(),
+  payload     jsonb not null,
+  created_at  timestamptz not null default now()
+);
+
+create or replace function forbid_event_mutation() returns trigger as $$
+begin
+  raise exception 'events are append-only; corrections are new (reversing) events';
+end;
+$$ language plpgsql;
+
+drop trigger if exists events_immutable on events;
+create trigger events_immutable
+  before update or delete on events
+  for each row execute function forbid_event_mutation();
+
+-- Costed inventory movements, derived from events. Immutable by the same logic
+-- (only ever written inside the event-ingest transaction).
+create table if not exists inventory_moves (
+  id            uuid primary key default gen_random_uuid(),
+  tenant_id     uuid not null references tenants(id),
+  event_id      uuid not null references events(id),
+  item_id       uuid not null references items(id),
+  direction     text not null check (direction in ('in', 'out')),
+  qty           numeric(18,4) not null check (qty > 0),
+  unit_cost     numeric(18,6) not null,
+  value         numeric(18,2) not null,
+  location_code text not null default 'MAIN',
+  created_at    timestamptz not null default now()
+);
+
+-- Moving-average cost projection, per item per location.
+create table if not exists item_costs (
+  tenant_id     uuid not null references tenants(id),
+  item_id       uuid not null references items(id),
+  location_code text not null default 'MAIN',
+  qty_on_hand   numeric(18,4) not null default 0,
+  avg_cost      numeric(18,6) not null default 0,
+  updated_at    timestamptz not null default now(),
+  primary key (tenant_id, item_id, location_code)
+);
+
+-- Kernel-level WIP cost accumulation per work-order reference.
+-- Real WorkOrder documents arrive in Phase 1; the cost flow is real today.
+create table if not exists wip_jobs (
+  tenant_id        uuid not null references tenants(id),
+  work_order       text not null,
+  accumulated_cost numeric(18,2) not null default 0,
+  updated_at       timestamptz not null default now(),
+  primary key (tenant_id, work_order)
+);
+
+-- Posting rules are data: versioned, seeded, readable in the UI.
+create table if not exists posting_rules (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  event_type text not null,
+  version    int not null default 1,
+  lines      jsonb not null,
+  unique (tenant_id, event_type, version)
+);
+
+create table if not exists journal_entries (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  event_id   uuid not null references events(id) unique,
+  entry_date date not null default current_date,
+  memo       text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists journal_lines (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  entry_id   uuid not null references journal_entries(id),
+  account_id uuid not null references accounts(id),
+  side       text not null check (side in ('debit', 'credit')),
+  amount     numeric(18,2) not null check (amount > 0)
+);
+
+create index if not exists idx_events_tenant_seq on events (tenant_id, seq desc);
+create index if not exists idx_moves_tenant_item on inventory_moves (tenant_id, item_id);
+create index if not exists idx_jlines_tenant_account on journal_lines (tenant_id, account_id);
