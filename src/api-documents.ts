@@ -12,6 +12,7 @@ import {
 import {
   closeChecks, createBill, financials, listBills, listInvoices, payBill, recordInvoicePayment,
 } from './finance.js'
+import { compareTrialBalance, getMapping, qbSummary, updateMapping } from './qb-bridge.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -133,6 +134,35 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
     c.json(await recordInvoicePayment(db, c.var.tenantId, pid(c)))))
   app.get('/api/financials', async (c) => c.json(await financials(db, c.var.tenantId)))
   app.get('/api/close-checks', async (c) => c.json(await closeChecks(db, c.var.tenantId)))
+
+  // --- QuickBooks bridge ---------------------------------------------------
+  app.get('/api/qb/summary', wrap(async (c) => {
+    const from = c.req.query('from') ?? ''
+    const to = c.req.query('to') ?? ''
+    return c.json(await qbSummary(db, c.var.tenantId, from, to))
+  }))
+  app.get('/api/qb/mapping', async (c) => c.json(await getMapping(db, c.var.tenantId)))
+  app.put('/api/qb/mapping', wrap(async (c) => {
+    const body = z
+      .object({ entries: z.array(z.object({ code: z.string().min(1), qb_account: z.string().min(1) })).min(1) })
+      .parse(await c.req.json())
+    return c.json(await updateMapping(db, c.var.tenantId, body.entries))
+  }))
+  app.post('/api/qb/compare', wrap(async (c) => {
+    const body = z
+      .object({
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        rows: z
+          .array(z.object({
+            account: z.string(),
+            debit: z.number().nonnegative().optional(),
+            credit: z.number().nonnegative().optional(),
+          }))
+          .min(1),
+      })
+      .parse(await c.req.json())
+    return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
+  }))
 
   // --- masters: work centers, BOM, reorder points --------------------------
   app.get('/api/work-centers', async (c) => {

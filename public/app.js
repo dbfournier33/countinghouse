@@ -28,6 +28,7 @@ const PAGES = [
   ['capacity', '/capacity.html', 'Capacity'],
   ['finance', '/finance.html', 'Finance'],
   ['financials', '/financials.html', 'Financials'],
+  ['qb', '/qb.html', 'QuickBooks'],
 ]
 
 export function mountNav(active) {

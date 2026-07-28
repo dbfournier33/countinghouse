@@ -30,8 +30,8 @@ export async function provisionTenant(db: PGlite, name: string, token: string): 
 
   for (const a of COA) {
     await db.query(
-      'insert into accounts (tenant_id, code, name, kind, normal_side) values ($1, $2, $3, $4, $5)',
-      [tenantId, a.code, a.name, a.kind, a.normal],
+      'insert into accounts (tenant_id, code, name, kind, normal_side, qb_account) values ($1, $2, $3, $4, $5, $6)',
+      [tenantId, a.code, a.name, a.kind, a.normal, a.qb],
     )
   }
   for (const [eventType, lines] of Object.entries(POSTING_RULES)) {

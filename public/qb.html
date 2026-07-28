@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — QuickBooks bridge</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Summary journal entry — post our period into QuickBooks</h2>
+    <div class="formrow">
+      <label class="muted" style="font-size:13px">from</label>
+      <input id="s-from" type="date" />
+      <label class="muted" style="font-size:13px">to</label>
+      <input id="s-to" type="date" />
+      <button class="primary" id="s-gen">Generate</button>
+      <button id="s-csv" disabled>Download CSV (QBO journal import)</button>
+    </div>
+    <table id="summary"></table>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Trial balance comparison — do the books agree?</h2>
+      <div class="muted" style="font-size:13px; margin-bottom:8px">
+        Paste QuickBooks' Trial Balance export (CSV: Account, Debit, Credit), pick the as-of date, compare.
+      </div>
+      <textarea id="c-rows" rows="7" style="width:100%; font-family:var(--mono); font-size:12px"
+        placeholder="Account,Debit,Credit&#10;Checking,900.00,&#10;Inventory Asset,2445.43,&#10;…"></textarea>
+      <div class="formrow" style="margin-top:8px">
+        <label class="muted" style="font-size:13px">as of</label>
+        <input id="c-to" type="date" />
+        <button class="primary" id="c-run">Compare</button>
+        <button class="small" id="c-example">Fill with simulated QB export</button>
+      </div>
+      <div id="c-headline" style="margin:10px 0 6px; font-weight:650"></div>
+      <table id="compare"></table>
+    </section>
+
+    <section class="card">
+      <h2>Account mapping — ours → QuickBooks</h2>
+      <div class="muted" style="font-size:13px; margin-bottom:8px">
+        Many-to-one is normal: our three inventory accounts summarize into QB's single Inventory Asset.
+      </div>
+      <table id="mapping"></table>
+      <div class="actions" style="margin-top:10px">
+        <button class="primary" id="m-save">Save mapping</button>
+      </div>
+    </section>
+  </div>
+
+  <footer>Stage 1 of the QuickBooks road: shadow books. QuickBooks stays the system of record while our statements prove themselves month after month — then it retires. A live QBO API connection is a later slice; the data contract is identical.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'qb',
+  title: 'QuickBooks bridge',
+  subtitle: 'Shadow books: one summary journal entry per period out, one trial-balance diff in.',
+})
+
+const today = new Date()
+const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+document.getElementById('s-from').value = iso(monthStart)
+document.getElementById('s-to').value = iso(today)
+document.getElementById('c-to').value = iso(today)
+
+let lastSummary = null
+
+async function generate() {
+  const from = document.getElementById('s-from').value
+  const to = document.getElementById('s-to').value
+  try {
+    const s = await api(`/api/qb/summary?from=${from}&to=${to}`)
+    lastSummary = s
+    document.getElementById('s-csv').disabled = s.lines.length === 0
+    document.getElementById('summary').replaceChildren(el(`
+      <thead><tr><th>QuickBooks account</th><th class="num">Debits</th><th class="num">Credits</th></tr></thead>
+      <tbody>
+        ${s.lines.map((l) => `<tr>
+          <td>${l.qb_account}</td>
+          <td class="num">${l.debit ? usd(l.debit) : '<span class="muted">—</span>'}</td>
+          <td class="num">${l.credit ? usd(l.credit) : '<span class="muted">—</span>'}</td>
+        </tr>`).join('') || '<tr><td colspan="3" class="muted">no activity in this period</td></tr>'}
+        <tr class="total"><td>${s.journal_no} · ${s.journal_date} ${s.balanced ? '<span class="ok">✓ balanced</span>' : '<span class="err">✗</span>'}</td>
+          <td class="num">${usd(s.total_debits)}</td><td class="num">${usd(s.total_credits)}</td></tr>
+      </tbody>
+    `))
+  } catch (e) { toast(e.message, true) }
+}
+
+document.getElementById('s-gen').addEventListener('click', generate)
+
+document.getElementById('s-csv').addEventListener('click', () => {
+  if (!lastSummary) return
+  const esc = (v) => `"${String(v).replaceAll('"', '""')}"`
+  const rows = [
+    ['JournalNo', 'JournalDate', 'AccountName', 'Debits', 'Credits', 'Description'],
+    ...lastSummary.lines.map((l) => [
+      lastSummary.journal_no, lastSummary.journal_date, l.qb_account,
+      l.debit ? l.debit.toFixed(2) : '', l.credit ? l.credit.toFixed(2) : '', lastSummary.memo,
+    ]),
+  ]
+  const blob = new Blob([rows.map((r) => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `${lastSummary.journal_no}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+})
+
+function parseCsv(text) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    .map((line) => line.split(',').map((cell) => cell.trim().replaceAll('"', '')))
+    .filter((cells) => cells[0] && !/^account$/i.test(cells[0]))
+    .map((cells) => ({
+      account: cells[0],
+      debit: Number(cells[1]?.replaceAll(/[$,\s]/g, '') || 0) || 0,
+      credit: Number(cells[2]?.replaceAll(/[$,\s]/g, '') || 0) || 0,
+    }))
+}
+
+document.getElementById('c-run').addEventListener('click', async () => {
+  const rows = parseCsv(document.getElementById('c-rows').value)
+  if (!rows.length) return toast('paste a trial balance first', true)
+  try {
+    const r = await api('/api/qb/compare', {
+      method: 'POST',
+      body: JSON.stringify({ to: document.getElementById('c-to').value, rows }),
+    })
+    document.getElementById('c-headline').innerHTML = r.all_match
+      ? `<span class="ok">✓ All ${r.total} accounts match — the shadow books agree</span>`
+      : `<span class="err">⚠ ${r.matched} of ${r.total} accounts match</span>`
+    document.getElementById('compare').replaceChildren(el(`
+      <thead><tr><th></th><th>Account</th><th class="num">Ours</th><th class="num">QuickBooks</th><th class="num">Diff</th></tr></thead>
+      <tbody>${r.rows.map((row) => `
+        <tr>
+          <td class="${row.match ? 'ok' : 'err'}" style="width:20px">${row.match ? '✓' : '⚠'}</td>
+          <td>${row.account}${row.only_in ? ` <span class="muted" style="font-size:11px">(only in ${row.only_in})</span>` : ''}</td>
+          <td class="num">${usd(row.ours)}</td>
+          <td class="num">${usd(row.quickbooks)}</td>
+          <td class="num ${row.match ? '' : 'err'}">${row.match ? '—' : usd(row.diff)}</td>
+        </tr>`).join('')}
+      </tbody>
+    `))
+  } catch (e) { toast(e.message, true) }
+})
+
+// Demo helper: simulate what QB's trial balance would say if the bookkeeper
+// posted our summaries — with one deliberate $50 mismatch so the diff shows.
+// Cumulative net per QB account = summary over all time through the as-of date.
+document.getElementById('c-example').addEventListener('click', async () => {
+  const to = document.getElementById('c-to').value
+  try {
+    const s = await api(`/api/qb/summary?from=1970-01-01&to=${to}`)
+    const csv = s.lines.map((l) => {
+      let net = l.debit - l.credit
+      if (l.qb_account === 'Operating Expenses') net += 50 // deliberate mismatch for the demo
+      const debit = net > 0 ? net.toFixed(2) : ''
+      const credit = net < 0 ? (-net).toFixed(2) : ''
+      return `${l.qb_account},${debit},${credit}`
+    })
+    document.getElementById('c-rows').value = 'Account,Debit,Credit\n' + csv.join('\n')
+    toast('Filled with a simulated QB export — includes one deliberate $50 mismatch')
+  } catch (e) { toast(e.message, true) }
+})
+
+async function renderMapping() {
+  const mapping = await api('/api/qb/mapping')
+  document.getElementById('mapping').replaceChildren(el(`
+    <thead><tr><th>Ours</th><th>QuickBooks account</th></tr></thead>
+    <tbody>${mapping.map((m) => `
+      <tr>
+        <td><span class="code muted" style="font-size:11px">${m.code}</span> ${m.name}</td>
+        <td><input class="m-qb" data-code="${m.code}" value="${m.qb_account}" style="width:100%" /></td>
+      </tr>`).join('')}
+    </tbody>
+  `))
+}
+
+document.getElementById('m-save').addEventListener('click', async () => {
+  const entries = [...document.querySelectorAll('.m-qb')].map((i) => ({
+    code: i.dataset.code, qb_account: i.value,
+  }))
+  try {
+    await api('/api/qb/mapping', { method: 'PUT', body: JSON.stringify({ entries }) })
+    toast('Mapping saved')
+    await generate()
+  } catch (e) { toast(e.message, true) }
+})
+
+await renderMapping()
+await generate()
+</script>
+</body>
+</html>

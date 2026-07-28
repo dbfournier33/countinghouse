@@ -56,6 +56,11 @@ Run `seed` before `dev` (the dev database is single-process PGlite).
 | `GET /api/inventory` | On-hand, moving-average cost, value, open WIP |
 | `GET /api/ledger/:code` | Account activity with running balance |
 | `GET /api/posting-rules` | The event → journal mapping, as stored |
+| `POST/GET /api/purchase-orders`, `/api/sales-orders`, `/api/work-orders` + action routes | Phase 1 documents (issue/receive, confirm/ship, release/issue-materials/log-time/complete) |
+| `GET /api/planning`, `POST /api/planning/apply`, `GET /api/capacity` | Planning suggestions and work-center load |
+| `POST/GET /api/bills`, `/api/invoices` + pay/record-payment | Phase 2 AR/AP documents |
+| `GET /api/financials`, `GET /api/close-checks` | Statements + the close checklist |
+| `GET /api/qb/summary`, `GET/PUT /api/qb/mapping`, `POST /api/qb/compare` | QuickBooks bridge: summary JE, account mapping, trial-balance diff |
 | `POST/GET /api/items`, `/api/parties` | Minimal masters |
 
 Auth: `Authorization: Bearer dev-bigsur` (demo tenant).

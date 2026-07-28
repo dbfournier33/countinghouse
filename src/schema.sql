@@ -46,6 +46,10 @@ create table if not exists accounts (
   unique (tenant_id, code)
 );
 
+-- QuickBooks bridge: which QB account each of ours summarizes into.
+-- Many-to-one is expected (our 1310/1330/1350 all roll into "Inventory Asset").
+alter table accounts add column if not exists qb_account text;
+
 -- The append-only operational event log. Corrections are new (reversing) events.
 create table if not exists events (
   id          uuid primary key default gen_random_uuid(),
