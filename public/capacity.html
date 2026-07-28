@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Capacity</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Work-center load — next 14 days</h2>
+    <div class="board"><table id="board"></table></div>
+    <div class="legend">
+      <span><span class="sw" style="background:color-mix(in srgb, var(--accent) 9%, white)"></span>under 80%</span>
+      <span><span class="sw" style="background:var(--warn-bg)"></span>80–100%</span>
+      <span><span class="sw" style="background:var(--bad-bg)"></span>over capacity</span>
+      <span class="muted">cell = committed hours / daily hours</span>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Open work orders — reschedule</h2>
+    <table id="wos"></table>
+  </section>
+  <footer>Load counts released and in-progress work orders with a work center and date. Drafts and unscheduled orders sit below until you place them.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, statusBadge, toast } from '/app.js'
+
+pageShell({
+  active: 'capacity',
+  title: 'Capacity',
+  subtitle: 'Committed hours against what each work center can actually do.',
+})
+
+const dayLabel = (d) =>
+  new Date(d + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })
+
+async function render() {
+  const cap = await api('/api/capacity')
+
+  document.getElementById('board').replaceChildren(el(`
+    <thead><tr><th>Work center</th>${cap.days
+      .map((d, i) => `<th class="num ${i === 0 ? 'today' : ''}">${dayLabel(d)}</th>`)
+      .join('')}</tr></thead>
+    <tbody>${cap.work_centers.map((wc) => `
+      <tr>
+        <td>${wc.code}<br /><span class="muted" style="font-size:12px">${wc.name} · ${wc.daily_hours}h/day</span></td>
+        ${cap.days.map((d, i) => {
+          const cell = wc.load[d]
+          if (!cell) return `<td class="${i === 0 ? 'today-col' : ''}"><div class="cell empty">·</div></td>`
+          const pct = wc.daily_hours > 0 ? cell.hours / wc.daily_hours : 0
+          const cls = pct > 1 ? 'overload' : pct >= 0.8 ? 'warnload' : 'okload'
+          return `<td class="${i === 0 ? 'today-col' : ''}">
+            <div class="cell ${cls}" title="${cell.wos.join(', ')}">${qtyFmt(cell.hours)}h<br /><span style="font-weight:400">${Math.round(pct * 100)}%</span></div>
+          </td>`
+        }).join('')}
+      </tr>`).join('') || '<tr><td class="muted">no work centers yet</td></tr>'}
+    </tbody>
+  `))
+
+  const wcs = await api('/api/work-centers')
+  const rows = [...cap.open_work_orders]
+  document.getElementById('wos').replaceChildren(el(`
+    <thead><tr><th>WO</th><th>Make</th><th>Status</th><th class="num">Est hours</th><th>Work center</th><th>Date</th><th></th></tr></thead>
+    <tbody>${rows.map((w) => `
+      <tr>
+        <td class="code">${w.number}</td>
+        <td>${qtyFmt(w.qty)} × ${w.sku}</td>
+        <td>${statusBadge(w.status)}</td>
+        <td class="num">${w.est_hours ? w.est_hours + 'h' : '<span class="muted">—</span>'}</td>
+        <td><select class="r-wc" data-id="${w.id}">${wcs
+          .map((c) => `<option value="${c.code}" ${c.code === w.work_center ? 'selected' : ''}>${c.code}</option>`)
+          .join('')}</select></td>
+        <td><input class="r-date" data-id="${w.id}" type="date" value="${w.scheduled_date ?? ''}" /></td>
+        <td><button class="small r-save" data-id="${w.id}">Save</button></td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">no open work orders</td></tr>'}
+    </tbody>
+  `))
+
+  document.querySelectorAll('.r-save').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const id = b.dataset.id
+      const body = {
+        work_center: document.querySelector(`.r-wc[data-id="${id}"]`).value,
+      }
+      const date = document.querySelector(`.r-date[data-id="${id}"]`).value
+      if (date) body.scheduled_date = date
+      try {
+        const r = await api(`/api/work-orders/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+        toast(`${r.number} rescheduled`)
+        await render()
+      } catch (e) {
+        toast(e.message, true)
+      }
+    }),
+  )
+}
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

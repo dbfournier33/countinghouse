@@ -160,11 +160,20 @@ export async function ingest(
   tenantId: string,
   input: { type: EventType; payload: unknown; occurred_at?: string },
 ): Promise<IngestResult> {
+  return db.transaction((tx) => ingestTx(tx, tenantId, input))
+}
+
+// The same pipeline, callable inside an enclosing transaction — documents use
+// this so "update the document + emit its events" is one atomic unit.
+export async function ingestTx(
+  tx: Transaction,
+  tenantId: string,
+  input: { type: EventType; payload: unknown; occurred_at?: string },
+): Promise<IngestResult> {
   const schema = EventSchemas[input.type]
   if (!schema) throw new KernelError(`unknown event type "${input.type}"`, 400)
   const p = schema.parse(input.payload) as Record<string, unknown>
-
-  return db.transaction(async (tx) => {
+  {
     const ev = await tx.query<{ id: string; seq: string; occurred_at: string }>(
       `insert into events (tenant_id, type, occurred_at, payload)
        values ($1, $2, coalesce($3::timestamptz, now()), $4)
@@ -365,5 +374,5 @@ export async function ingest(
       moves,
       journal,
     }
-  })
+  }
 }

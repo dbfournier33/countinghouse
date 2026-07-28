@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Sales</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>New sales order</h2>
+    <div class="formrow">
+      <select id="customer"></select>
+      <span class="muted" style="font-size:13px">shipping auto-invoices at line prices</span>
+    </div>
+    <div class="lines-editor" id="lines"></div>
+    <div class="actions">
+      <button class="small" id="addline">+ line</button>
+      <button class="primary" id="create">Create draft SO</button>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Sales orders</h2>
+    <table id="sos"></table>
+  </section>
+  <footer>Shipping posts <span class="codetext">GoodsShipped</span> (COGS moves at moving-average cost) and one <span class="codetext">InvoiceIssued</span> — revenue and AR move in the same transaction.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, statusBadge, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'sales',
+  title: 'Sales',
+  subtitle: 'Customers, sales orders, shipping — invoice on ship, by design.',
+})
+
+let items = []
+
+function lineRow() {
+  return el(`<div class="formrow">
+    <select class="l-sku">${items.map((i) => `<option value="${i.sku}">${i.sku} — ${i.name}</option>`).join('')}</select>
+    <input class="qty l-qty" type="number" min="0" step="any" placeholder="qty" />
+    <input class="money l-price" type="number" min="0" step="any" placeholder="unit price $" />
+    <button class="small l-del">×</button>
+  </div>`)
+}
+
+async function render() {
+  const [parties, itemList, sos] = await Promise.all([
+    api('/api/parties'), api('/api/items'), api('/api/sales-orders'),
+  ])
+  items = itemList.filter((i) => i.kind === 'finished' || i.kind === 'subassembly')
+  const customers = parties.filter((p) => p.roles.includes('customer'))
+  document.getElementById('customer').replaceChildren(
+    el(customers.map((v) => `<option>${v.name}</option>`).join('') || '<option disabled>no customers on file</option>'),
+  )
+  const lines = document.getElementById('lines')
+  if (!lines.children.length) lines.append(lineRow())
+
+  document.getElementById('sos').replaceChildren(el(`
+    <thead><tr><th>SO</th><th>Customer</th><th>Status</th><th>Lines (shipped / ordered)</th><th class="num">Value</th><th>Actions</th></tr></thead>
+    <tbody>${sos.map((so) => {
+      const value = so.lines.reduce((s, l) => s + l.qty * l.unit_price, 0)
+      const actions =
+        so.status === 'draft'
+          ? `<button class="small" data-act="confirm" data-id="${so.id}">Confirm</button>`
+          : ['confirmed', 'partially_shipped'].includes(so.status)
+            ? `<button class="small" data-act="ship" data-id="${so.id}">Ship all</button>`
+            : '<span class="muted">—</span>'
+      return `<tr>
+        <td class="code">${so.number}</td>
+        <td>${so.customer}</td>
+        <td>${statusBadge(so.status)}</td>
+        <td style="font-size:13px">${so.lines
+          .map((l) => `${l.sku} <b>${qtyFmt(l.shipped_qty)}</b>/${qtyFmt(l.qty)} @ ${usd(l.unit_price)}`)
+          .join('<br />')}</td>
+        <td class="num">${usd(value)}</td>
+        <td><div class="actions">${actions}</div></td>
+      </tr>`
+    }).join('') || '<tr><td colspan="6" class="muted">no sales orders yet</td></tr>'}
+    </tbody>
+  `))
+
+  document.querySelectorAll('button[data-act]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true
+      try {
+        const r = await api(`/api/sales-orders/${b.dataset.id}/${b.dataset.act}`, { method: 'POST', body: '{}' })
+        toast(r.invoice ? `${r.number} shipped — invoiced ${usd(r.invoice.amount)} (${r.invoice.number})` : `${r.number}: ${r.status}`)
+        await render()
+      } catch (e) {
+        toast(e.message, true)
+        b.disabled = false
+      }
+    }),
+  )
+}
+
+document.getElementById('addline').addEventListener('click', () => document.getElementById('lines').append(lineRow()))
+document.getElementById('lines').addEventListener('click', (e) => {
+  if (e.target.classList.contains('l-del')) e.target.closest('.formrow').remove()
+})
+document.getElementById('create').addEventListener('click', async () => {
+  const lines = [...document.querySelectorAll('#lines .formrow')]
+    .map((r) => ({
+      sku: r.querySelector('.l-sku').value,
+      qty: Number(r.querySelector('.l-qty').value),
+      unit_price: Number(r.querySelector('.l-price').value),
+    }))
+    .filter((l) => l.qty > 0)
+  if (!lines.length) return toast('add at least one line with a quantity', true)
+  try {
+    const r = await api('/api/sales-orders', {
+      method: 'POST',
+      body: JSON.stringify({ customer: document.getElementById('customer').value, lines }),
+    })
+    toast(`Created ${r.number} (draft)`)
+    document.getElementById('lines').replaceChildren(lineRow())
+    await render()
+  } catch (e) {
+    toast(e.message, true)
+  }
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

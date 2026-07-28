@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Planning</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Demand vs supply</h2>
+    <table id="plan"></table>
+  </section>
+  <footer>Projected = on hand + on order + in production − open demand. A suggestion appears when projected falls below the reorder point — one click creates the draft PO or work order. Single-level MRP-lite, on purpose.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, toast } from '/app.js'
+
+pageShell({
+  active: 'planning',
+  title: 'Planning',
+  subtitle: 'The spreadsheet this replaces: every item’s position, and what to do about it.',
+})
+
+async function render() {
+  const rows = await api('/api/planning')
+  document.getElementById('plan').replaceChildren(el(`
+    <thead><tr>
+      <th>Item</th><th class="num">On hand</th><th class="num">On order</th>
+      <th class="num">In production</th><th class="num">Demand</th><th class="num">Projected</th>
+      <th class="num">Reorder pt</th><th>Suggestion</th>
+    </tr></thead>
+    <tbody>${rows.map((r) => `
+      <tr class="${r.suggestion ? 'suggest' : ''}">
+        <td>${r.name}<br /><span class="muted" style="font-size:12px">${r.sku} · ${r.kind}</span></td>
+        <td class="num">${qtyFmt(r.on_hand)} ${r.uom}</td>
+        <td class="num">${r.on_order ? qtyFmt(r.on_order) : '<span class="muted">—</span>'}</td>
+        <td class="num">${r.in_production ? qtyFmt(r.in_production) : '<span class="muted">—</span>'}</td>
+        <td class="num">${r.demand ? qtyFmt(r.demand) : '<span class="muted">—</span>'}</td>
+        <td class="num" style="font-weight:650">${qtyFmt(r.projected)}</td>
+        <td class="num muted">${qtyFmt(r.reorder_point)}</td>
+        <td>${r.suggestion
+          ? `<button class="small" data-sku="${r.sku}">${r.suggestion.action === 'buy' ? 'Buy' : 'Make'} ${qtyFmt(r.suggestion.qty)} ${r.uom}</button>`
+          : '<span class="muted">covered</span>'}</td>
+      </tr>`).join('')}
+    </tbody>
+  `))
+  document.querySelectorAll('button[data-sku]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true
+      try {
+        const r = await api('/api/planning/apply', { method: 'POST', body: JSON.stringify({ sku: b.dataset.sku }) })
+        toast(`Created draft ${r.created} — review it on the ${r.kind === 'work_order' ? 'Production' : 'Purchasing'} page`)
+        await render()
+      } catch (e) {
+        toast(e.message, true)
+        b.disabled = false
+      }
+    }),
+  )
+}
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

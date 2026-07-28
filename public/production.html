@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Production</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>New work order</h2>
+    <div class="formrow">
+      <select id="wo-sku"></select>
+      <input class="qty" id="wo-qty" type="number" min="0" step="any" placeholder="qty" />
+      <select id="wo-wc"></select>
+      <input id="wo-date" type="date" />
+      <input class="qty" id="wo-hours" type="number" min="0" step="any" placeholder="est h" />
+      <button class="primary" id="create">Create draft WO</button>
+    </div>
+    <div class="muted" style="font-size:13px">Components come from the item's bill of materials — issued in one click after release.</div>
+  </section>
+  <section class="card">
+    <h2>Work orders</h2>
+    <table id="wos"></table>
+  </section>
+  <footer>Materials issue and time logs accumulate into WIP; completion drains WIP into finished goods at actual unit cost. The ledger follows every step on its own.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, statusBadge, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'production',
+  title: 'Production',
+  subtitle: 'Work orders from BOM → release → issue materials → log time → complete.',
+})
+
+async function render() {
+  const [items, wcs, wos] = await Promise.all([
+    api('/api/items'), api('/api/work-centers'), api('/api/work-orders'),
+  ])
+  const makeable = items.filter((i) => i.kind === 'finished' || i.kind === 'subassembly')
+  document.getElementById('wo-sku').replaceChildren(
+    el(makeable.map((i) => `<option value="${i.sku}">${i.sku} — ${i.name}</option>`).join('')),
+  )
+  document.getElementById('wo-wc').replaceChildren(
+    el(wcs.map((w) => `<option value="${w.code}">${w.code} — ${w.name}</option>`).join('')),
+  )
+
+  document.getElementById('wos').replaceChildren(el(`
+    <thead><tr><th>WO</th><th>Make</th><th>Status</th><th>Schedule</th><th>Components (issued / required)</th><th class="num">WIP cost</th><th>Actions</th></tr></thead>
+    <tbody>${wos.map((w) => {
+      const acts = []
+      if (w.status === 'draft') acts.push(`<button class="small" data-act="release" data-id="${w.id}">Release</button>`)
+      if (['released', 'in_progress'].includes(w.status)) {
+        if (w.components.some((c) => c.issued_qty < c.qty_required))
+          acts.push(`<button class="small" data-act="issue-materials" data-id="${w.id}">Issue materials</button>`)
+        acts.push(`<button class="small" data-time="${w.id}">Log time</button>`)
+      }
+      if (w.status === 'in_progress') acts.push(`<button class="small primary" data-act="complete" data-id="${w.id}">Complete</button>`)
+      return `<tr>
+        <td class="code">${w.number}</td>
+        <td>${qtyFmt(w.qty)} × ${w.sku}</td>
+        <td>${statusBadge(w.status)}</td>
+        <td style="font-size:13px">${w.scheduled_date ?? '<span class="muted">unscheduled</span>'}<br />
+          <span class="muted">${w.work_center ?? ''} ${w.est_hours ? `· ${w.est_hours}h` : ''}</span></td>
+        <td style="font-size:13px">${w.components
+          .map((c) => `${c.sku} <b>${qtyFmt(c.issued_qty)}</b>/${qtyFmt(c.qty_required)}`)
+          .join('<br />')}</td>
+        <td class="num">${w.wip_cost ? usd(w.wip_cost) : '<span class="muted">—</span>'}</td>
+        <td>
+          <div class="actions">${acts.join('') || '<span class="muted">—</span>'}</div>
+          <div class="formrow timeform" data-for="${w.id}" style="display:none; margin-top:6px">
+            <input class="qty t-hours" type="number" min="0" step="any" placeholder="hours" />
+            <input class="qty t-rate" type="number" min="0" step="any" value="38" title="loaded rate $/h" />
+            <input class="t-person" placeholder="person" style="width:110px" />
+            <button class="small t-save" data-id="${w.id}">Save</button>
+          </div>
+        </td>
+      </tr>`
+    }).join('') || '<tr><td colspan="7" class="muted">no work orders yet</td></tr>'}
+    </tbody>
+  `))
+
+  document.querySelectorAll('button[data-act]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true
+      try {
+        const r = await api(`/api/work-orders/${b.dataset.id}/${b.dataset.act}`, { method: 'POST', body: '{}' })
+        toast(`${r.number}: ${r.status}`)
+        await render()
+      } catch (e) {
+        toast(e.message, true)
+        b.disabled = false
+      }
+    }),
+  )
+  document.querySelectorAll('button[data-time]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const f = document.querySelector(`.timeform[data-for="${b.dataset.time}"]`)
+      f.style.display = f.style.display === 'none' ? 'flex' : 'none'
+    }),
+  )
+  document.querySelectorAll('.t-save').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const f = b.closest('.timeform')
+      const body = {
+        hours: Number(f.querySelector('.t-hours').value),
+        loaded_rate: Number(f.querySelector('.t-rate').value),
+      }
+      const person = f.querySelector('.t-person').value.trim()
+      if (person) body.person = person
+      try {
+        const r = await api(`/api/work-orders/${b.dataset.id}/log-time`, { method: 'POST', body: JSON.stringify(body) })
+        toast(`${r.number}: time logged`)
+        await render()
+      } catch (e) {
+        toast(e.message, true)
+      }
+    }),
+  )
+}
+
+document.getElementById('create').addEventListener('click', async () => {
+  const body = {
+    sku: document.getElementById('wo-sku').value,
+    qty: Number(document.getElementById('wo-qty').value),
+    work_center: document.getElementById('wo-wc').value || undefined,
+    est_hours: Number(document.getElementById('wo-hours').value) || undefined,
+  }
+  const date = document.getElementById('wo-date').value
+  if (date) body.scheduled_date = date
+  try {
+    const r = await api('/api/work-orders', { method: 'POST', body: JSON.stringify(body) })
+    toast(`Created ${r.number}: ${r.components.map((c) => `${qtyFmt(c.qty_required)} ${c.sku}`).join(', ')}`)
+    await render()
+  } catch (e) {
+    toast(e.message, true)
+  }
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

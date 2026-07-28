@@ -135,3 +135,101 @@ create table if not exists journal_lines (
 create index if not exists idx_events_tenant_seq on events (tenant_id, seq desc);
 create index if not exists idx_moves_tenant_item on inventory_moves (tenant_id, item_id);
 create index if not exists idx_jlines_tenant_account on journal_lines (tenant_id, account_id);
+
+-- ===========================================================================
+-- Phase 1: the document layer. Documents track commitments and drive planning;
+-- they WRITE EVENTS for every physical/financial effect — the spine stays the
+-- single source of truth for inventory and the ledger.
+-- ===========================================================================
+
+alter table items add column if not exists reorder_point numeric(18,4) not null default 0;
+
+create table if not exists doc_counters (
+  tenant_id uuid not null references tenants(id),
+  kind      text not null,
+  next_no   int  not null,
+  primary key (tenant_id, kind)
+);
+
+create table if not exists bom_lines (
+  tenant_id         uuid not null references tenants(id),
+  parent_item_id    uuid not null references items(id),
+  component_item_id uuid not null references items(id),
+  qty_per           numeric(18,10) not null check (qty_per > 0),
+  primary key (tenant_id, parent_item_id, component_item_id)
+);
+
+create table if not exists work_centers (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  code        text not null,
+  name        text not null,
+  daily_hours numeric(6,2) not null default 8,
+  unique (tenant_id, code)
+);
+
+create table if not exists purchase_orders (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  number     text not null,
+  vendor_id  uuid not null references parties(id),
+  status     text not null default 'draft'
+             check (status in ('draft', 'issued', 'partially_received', 'received', 'cancelled')),
+  created_at timestamptz not null default now(),
+  unique (tenant_id, number)
+);
+
+create table if not exists po_lines (
+  id           uuid primary key default gen_random_uuid(),
+  tenant_id    uuid not null references tenants(id),
+  po_id        uuid not null references purchase_orders(id),
+  item_id      uuid not null references items(id),
+  qty          numeric(18,4) not null check (qty > 0),
+  unit_cost    numeric(18,6) not null,
+  received_qty numeric(18,4) not null default 0
+);
+
+create table if not exists sales_orders (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  number      text not null,
+  customer_id uuid not null references parties(id),
+  status      text not null default 'draft'
+              check (status in ('draft', 'confirmed', 'partially_shipped', 'shipped', 'cancelled')),
+  created_at  timestamptz not null default now(),
+  unique (tenant_id, number)
+);
+
+create table if not exists so_lines (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  so_id       uuid not null references sales_orders(id),
+  item_id     uuid not null references items(id),
+  qty         numeric(18,4) not null check (qty > 0),
+  unit_price  numeric(18,6) not null,
+  shipped_qty numeric(18,4) not null default 0
+);
+
+create table if not exists work_orders (
+  id             uuid primary key default gen_random_uuid(),
+  tenant_id      uuid not null references tenants(id),
+  number         text not null,
+  item_id        uuid not null references items(id),
+  qty            numeric(18,4) not null check (qty > 0),
+  status         text not null default 'draft'
+                 check (status in ('draft', 'released', 'in_progress', 'completed', 'cancelled')),
+  work_center_id uuid references work_centers(id),
+  scheduled_date date,
+  est_hours      numeric(8,2) not null default 0,
+  created_at     timestamptz not null default now(),
+  unique (tenant_id, number)
+);
+
+create table if not exists wo_components (
+  id           uuid primary key default gen_random_uuid(),
+  tenant_id    uuid not null references tenants(id),
+  wo_id        uuid not null references work_orders(id),
+  item_id      uuid not null references items(id),
+  qty_required numeric(18,4) not null check (qty_required > 0),
+  issued_qty   numeric(18,4) not null default 0
+);

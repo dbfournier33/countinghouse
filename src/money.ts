@@ -2,6 +2,10 @@ export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
+export function round4(n: number): number {
+  return Math.round((n + Number.EPSILON) * 1e4) / 1e4
+}
+
 export function round6(n: number): number {
   return Math.round((n + Number.EPSILON) * 1e6) / 1e6
 }

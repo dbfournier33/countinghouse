@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { PGlite } from '@electric-sql/pglite'
 import { z } from 'zod'
+import { mountDocumentRoutes } from './api-documents.js'
 import { EventSchemas, ingest, KernelError, type EventType } from './events.js'
 import { num, round2 } from './money.js'
 
@@ -258,6 +259,8 @@ export function createApp(db: PGlite) {
     ])
     return c.json(r.rows)
   })
+
+  mountDocumentRoutes(app, db)
 
   return app
 }
