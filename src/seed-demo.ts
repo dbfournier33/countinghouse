@@ -5,10 +5,11 @@ import { rmSync } from 'node:fs'
 import { openDb, provisionTenant } from './bootstrap.js'
 import {
   completeWorkOrder, confirmSalesOrder, createPurchaseOrder, createSalesOrder, createWorkOrder,
-  issueMaterials, issuePurchaseOrder, logWorkOrderTime, receivePurchaseOrder, releaseWorkOrder,
+  issueMaterials, issuePurchaseOrder, receivePurchaseOrder, releaseWorkOrder,
   shipSalesOrder,
 } from './documents.js'
 import { createBill, payBill, recordInvoicePayment } from './finance.js'
+import { createEmployee, recordTime } from './people.js'
 import { ingest } from './events.js'
 import { num } from './money.js'
 
@@ -48,6 +49,13 @@ for (const [code, name, hours] of [
     tenantId, code, name, hours,
   ])
 }
+await createEmployee(db, tenantId, {
+  name: 'Maya Torres', cost_rate: 38, skills: ['line lead', 'mixing'], daily_hours: 8,
+})
+await createEmployee(db, tenantId, {
+  name: 'Diego Ruiz', cost_rate: 32, skills: ['packing'], daily_hours: 8,
+})
+
 // BOM for one bar: 50 g oats, 16.67 g honey, 1 wrapper
 const barId = (await db.query<{ id: string }>(
   "select id from items where tenant_id = $1 and sku = 'BAR-OG'", [tenantId])).rows[0].id
@@ -112,7 +120,7 @@ const wo1 = await createWorkOrder(db, tenantId, {
 })
 await releaseWorkOrder(db, tenantId, wo1.id)
 await issueMaterials(db, tenantId, wo1.id)
-await logWorkOrderTime(db, tenantId, wo1.id, { hours: 6, loaded_rate: 38, person: 'Maya Torres' })
+await recordTime(db, tenantId, { work_order: wo1.number, hours: 6, employee: 'Maya Torres' })
 await completeWorkOrder(db, tenantId, wo1.id)
 log(`${wo1.number}: BOM exploded → ${wo1.components.map((c) => `${c.qty_required} ${c.sku}`).join(', ')} → completed 2,400 bars`)
 
@@ -145,7 +153,8 @@ const wo2 = await createWorkOrder(db, tenantId, {
   sku: 'BAR-OG', qty: 600, work_center: 'LINE-1', scheduled_date: dstr(2), est_hours: 2.5,
 })
 await releaseWorkOrder(db, tenantId, wo2.id)
-log(`${wo2.number}: released for ${dstr(2)} (600 bars, 2.5h on LINE-1)`)
+await recordTime(db, tenantId, { work_order: wo2.number, hours: 1.5, employee: 'Diego Ruiz' })
+log(`${wo2.number}: released for ${dstr(2)} (600 bars, 2.5h on LINE-1); Diego logged 1.5h setup`)
 
 const wo3 = await createWorkOrder(db, tenantId, {
   sku: 'BAR-OG', qty: 1800, work_center: 'LINE-1', scheduled_date: dstr(3), est_hours: 7,

@@ -56,6 +56,19 @@ async function render() {
           </td>`
         }).join('')}
       </tr>`).join('') || '<tr><td class="muted">no work centers yet</td></tr>'}
+      ${cap.labor && cap.labor.daily_hours_available > 0 ? `
+      <tr style="border-top: 1.5px solid var(--line)">
+        <td>People<br /><span class="muted" style="font-size:12px">roster · ${cap.labor.daily_hours_available}h/day</span></td>
+        ${cap.days.map((d, i) => {
+          const hours = cap.labor.load[d]
+          if (!hours) return `<td class="${i === 0 ? 'today-col' : ''}"><div class="cell empty">·</div></td>`
+          const pct = hours / cap.labor.daily_hours_available
+          const cls = pct > 1 ? 'overload' : pct >= 0.8 ? 'warnload' : 'okload'
+          return `<td class="${i === 0 ? 'today-col' : ''}">
+            <div class="cell ${cls}">${qtyFmt(hours)}h<br /><span style="font-weight:400">${Math.round(pct * 100)}%</span></div>
+          </td>`
+        }).join('')}
+      </tr>` : ''}
     </tbody>
   `))
 

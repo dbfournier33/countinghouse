@@ -13,6 +13,7 @@ import {
   closeChecks, createBill, financials, listBills, listInvoices, payBill, recordInvoicePayment,
 } from './finance.js'
 import { compareTrialBalance, getMapping, qbSummary, updateMapping } from './qb-bridge.js'
+import { createEmployee, listEmployees, listTimeEntries, recordTime } from './people.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -163,6 +164,35 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
       .parse(await c.req.json())
     return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
   }))
+
+  // --- people & time -------------------------------------------------------
+  app.post('/api/employees', wrap(async (c) => {
+    const body = z
+      .object({
+        name: z.string().min(1),
+        cost_rate: z.number().positive(),
+        skills: z.array(z.string().min(1)).optional(),
+        daily_hours: z.number().positive().max(24).optional(),
+      })
+      .parse(await c.req.json())
+    return c.json(await createEmployee(db, c.var.tenantId, body), 201)
+  }))
+  app.get('/api/employees', async (c) => c.json(await listEmployees(db, c.var.tenantId)))
+  app.post('/api/time-entries', wrap(async (c) => {
+    const body = z
+      .object({
+        work_order: z.string().min(1),
+        hours: z.number().positive().max(24),
+        employee: z.string().optional(),
+        person: z.string().optional(),
+        rate: z.number().positive().optional(),
+        entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      })
+      .parse(await c.req.json())
+    return c.json(await recordTime(db, c.var.tenantId, body), 201)
+  }))
+  app.get('/api/time-entries', async (c) =>
+    c.json(await listTimeEntries(db, c.var.tenantId, Math.min(Number(c.req.query('days') ?? 14), 90))))
 
   // --- masters: work centers, BOM, reorder points --------------------------
   app.get('/api/work-centers', async (c) => {

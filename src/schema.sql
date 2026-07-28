@@ -257,6 +257,38 @@ create table if not exists invoices (
   unique (tenant_id, number)
 );
 
+-- ===========================================================================
+-- Phase 3: people & time. A person is a Party with the employee role plus
+-- labor attributes; time entries are records whose cost effect flows through
+-- the TimeLogged event into WIP. Payroll itself stays integrated-out, forever.
+-- ===========================================================================
+
+create table if not exists employees (
+  tenant_id   uuid not null references tenants(id),
+  party_id    uuid not null references parties(id),
+  cost_rate   numeric(8,2) not null check (cost_rate > 0), -- loaded $/hour
+  skills      text[] not null default '{}',
+  daily_hours numeric(4,1) not null default 8,
+  active      boolean not null default true,
+  primary key (tenant_id, party_id)
+);
+
+create table if not exists time_entries (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  wo_id       uuid not null references work_orders(id),
+  party_id    uuid references parties(id), -- null when logged as a free-text name
+  person_name text not null,
+  hours       numeric(6,2) not null check (hours > 0),
+  rate        numeric(8,2) not null check (rate > 0),
+  labor_cost  numeric(18,2) not null,
+  entry_date  date not null default current_date,
+  event_id    uuid not null references events(id),
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists idx_time_entries_tenant_date on time_entries (tenant_id, entry_date desc);
+
 create table if not exists bills (
   id        uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id),

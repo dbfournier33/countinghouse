@@ -417,15 +417,26 @@ export async function logWorkOrderTime(
   db: PGlite,
   tenantId: string,
   woId: string,
-  input: { hours: number; loaded_rate: number; person?: string },
+  input: { hours: number; loaded_rate: number; person?: string; party_id?: string; entry_date?: string },
 ) {
   return db.transaction(async (tx) => {
     const wo = await getWO(tx, tenantId, woId)
     assertStatus(wo.status, ['released', 'in_progress'], 'log time on')
     const event = await ingestTx(tx, tenantId, {
       type: 'TimeLogged',
-      payload: { ...input, work_order: wo.number },
+      payload: { hours: input.hours, loaded_rate: input.loaded_rate, person: input.person, work_order: wo.number },
+      // Backdated entries date their journal entry too.
+      occurred_at: input.entry_date ? `${input.entry_date}T12:00:00.000Z` : undefined,
     })
+    await tx.query(
+      `insert into time_entries (tenant_id, wo_id, party_id, person_name, hours, rate, labor_cost, entry_date, event_id)
+       values ($1, $2, $3, $4, $5, $6, $7, coalesce($8::date, current_date), $9)`,
+      [
+        tenantId, woId, input.party_id ?? null, input.person ?? 'direct labor',
+        input.hours, input.loaded_rate, round2(input.hours * input.loaded_rate),
+        input.entry_date ?? null, event.event.id,
+      ],
+    )
     await tx.query("update work_orders set status = 'in_progress' where tenant_id = $1 and id = $2", [
       tenantId, woId,
     ])
@@ -678,11 +689,24 @@ export async function capacity(db: PGlite, tenantId: string, days = 14) {
     cell.hours = round2(cell.hours + num(w.est_hours))
     cell.wos.push(w.number)
   }
+  // People are the second capacity constraint: committed hours per day across
+  // all work centers vs the roster's total daily hours.
+  const roster = await db.query<{ h: string }>(
+    'select coalesce(sum(daily_hours), 0) as h from employees where tenant_id = $1 and active',
+    [tenantId],
+  )
+  const laborLoad: Record<string, number> = {}
+  for (const w of wos.rows) {
+    if (w.scheduled_date && w.status !== 'draft')
+      laborLoad[w.scheduled_date] = round2((laborLoad[w.scheduled_date] ?? 0) + num(w.est_hours))
+  }
+
   return {
     days: dates,
     work_centers: centers.rows.map((wc) => ({
       code: wc.code, name: wc.name, daily_hours: num(wc.daily_hours), load: load[wc.code],
     })),
+    labor: { daily_hours_available: num(roster.rows[0].h), load: laborLoad },
     open_work_orders: wos.rows.map((w) => ({
       id: w.id, number: w.number, status: w.status, sku: w.sku, qty: num(w.qty),
       est_hours: num(w.est_hours), scheduled_date: w.scheduled_date, work_center: w.wc_code,

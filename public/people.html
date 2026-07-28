@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — People</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <div class="cols">
+    <section class="card">
+      <h2>Roster</h2>
+      <table id="roster"></table>
+      <div class="formrow" style="margin-top:10px">
+        <input id="e-name" placeholder="name" style="width:150px" />
+        <input class="money" id="e-rate" type="number" min="0" step="any" placeholder="loaded $/h" />
+        <input id="e-skills" placeholder="skills (comma sep)" style="width:160px" />
+        <input class="qty" id="e-hours" type="number" min="0" step="any" value="8" title="daily hours" />
+        <button class="primary" id="e-add">Add</button>
+      </div>
+      <div class="muted" style="font-size:13px; margin-top:6px">Loaded rate = wage + burden. Payroll itself lives in your payroll provider — always.</div>
+    </section>
+
+    <section class="card">
+      <h2>Log time</h2>
+      <div class="formrow">
+        <select id="t-emp"></select>
+        <select id="t-wo"></select>
+        <input class="qty" id="t-hours" type="number" min="0" step="any" placeholder="hours" />
+        <input class="money" id="t-rate" type="number" min="0" step="any" title="rate (auto from roster)" />
+        <input id="t-date" type="date" />
+        <button class="primary" id="t-log">Log</button>
+      </div>
+      <div class="muted" style="font-size:13px">Posts labor cost into the work order's WIP the moment you log it — job cost and the P&L follow on their own.</div>
+      <h2 style="margin-top:18px">Labor by work order</h2>
+      <table id="bywo"></table>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Time entries — last 14 days</h2>
+    <table id="entries"></table>
+  </section>
+
+  <footer>Time is direct labor against work orders (v1, on purpose). Utilization = logged hours vs roster daily hours. Skills feed scheduling later.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'people',
+  title: 'People',
+  subtitle: 'Roster, rates, and time — labor as a first-class capacity resource.',
+})
+
+let employees = []
+
+async function render() {
+  const [emps, wos, entries] = await Promise.all([
+    api('/api/employees'), api('/api/work-orders'), api('/api/time-entries?days=14'),
+  ])
+  employees = emps
+
+  const hoursByPerson = {}
+  for (const t of entries) hoursByPerson[t.person] = (hoursByPerson[t.person] ?? 0) + t.hours
+  document.getElementById('roster').replaceChildren(el(`
+    <thead><tr><th>Name</th><th class="num">Rate</th><th>Skills</th><th class="num">Hours/day</th><th class="num">Logged (14d)</th></tr></thead>
+    <tbody>${emps.map((e) => `
+      <tr>
+        <td>${e.name}</td>
+        <td class="num">${usd(e.cost_rate)}/h</td>
+        <td style="font-size:13px">${e.skills.length ? e.skills.map((s) => `<span class="pill">${s}</span>`).join(' ') : '<span class="muted">—</span>'}</td>
+        <td class="num">${e.daily_hours}</td>
+        <td class="num">${hoursByPerson[e.name] ? qtyFmt(hoursByPerson[e.name]) + 'h' : '<span class="muted">—</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="muted">no one on the roster yet</td></tr>'}
+    </tbody>
+  `))
+
+  const openWos = wos.filter((w) => ['released', 'in_progress'].includes(w.status))
+  document.getElementById('t-emp').replaceChildren(
+    el(emps.map((e) => `<option value="${e.name}" data-rate="${e.cost_rate}">${e.name}</option>`).join('') ||
+      '<option disabled>add someone to the roster first</option>'),
+  )
+  document.getElementById('t-wo').replaceChildren(
+    el(openWos.map((w) => `<option value="${w.number}">${w.number} — ${w.sku}</option>`).join('') ||
+      '<option disabled>no open work orders</option>'),
+  )
+  syncRate()
+
+  const byWo = {}
+  for (const t of entries) {
+    byWo[t.work_order] ??= { sku: t.sku, hours: 0, cost: 0 }
+    byWo[t.work_order].hours += t.hours
+    byWo[t.work_order].cost += t.labor_cost
+  }
+  document.getElementById('bywo').replaceChildren(el(`
+    <thead><tr><th>WO</th><th class="num">Hours</th><th class="num">Labor cost</th></tr></thead>
+    <tbody>${Object.entries(byWo).map(([wo, v]) => `
+      <tr><td class="code">${wo} <span class="muted">${v.sku}</span></td>
+        <td class="num">${qtyFmt(v.hours)}h</td><td class="num">${usd(v.cost)}</td></tr>`).join('') ||
+      '<tr><td colspan="3" class="muted">no time logged yet</td></tr>'}
+    </tbody>
+  `))
+
+  document.getElementById('entries').replaceChildren(el(`
+    <thead><tr><th>Date</th><th>Person</th><th>Work order</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Cost</th></tr></thead>
+    <tbody>${entries.map((t) => `
+      <tr>
+        <td style="font-size:13px">${t.entry_date}</td>
+        <td>${t.person}${t.on_roster ? '' : ' <span class="muted" style="font-size:11px">(not on roster)</span>'}</td>
+        <td class="code">${t.work_order} <span class="muted">${t.sku}</span></td>
+        <td class="num">${qtyFmt(t.hours)}</td>
+        <td class="num">${usd(t.rate)}/h</td>
+        <td class="num">${usd(t.labor_cost)}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="muted">no entries in the last 14 days</td></tr>'}
+    </tbody>
+  `))
+}
+
+function syncRate() {
+  const sel = document.getElementById('t-emp').selectedOptions[0]
+  if (sel?.dataset.rate) document.getElementById('t-rate').value = sel.dataset.rate
+}
+document.getElementById('t-emp').addEventListener('change', syncRate)
+
+document.getElementById('e-add').addEventListener('click', async () => {
+  const skills = document.getElementById('e-skills').value.split(',').map((s) => s.trim()).filter(Boolean)
+  const body = {
+    name: document.getElementById('e-name').value.trim(),
+    cost_rate: Number(document.getElementById('e-rate').value),
+    daily_hours: Number(document.getElementById('e-hours').value) || 8,
+  }
+  if (skills.length) body.skills = skills
+  try {
+    await api('/api/employees', { method: 'POST', body: JSON.stringify(body) })
+    toast(`${body.name} added to the roster`)
+    document.getElementById('e-name').value = ''
+    document.getElementById('e-rate').value = ''
+    document.getElementById('e-skills').value = ''
+    await render()
+  } catch (e) { toast(e.message, true) }
+})
+
+document.getElementById('t-log').addEventListener('click', async () => {
+  const body = {
+    work_order: document.getElementById('t-wo').value,
+    hours: Number(document.getElementById('t-hours').value),
+    employee: document.getElementById('t-emp').value,
+  }
+  const rate = Number(document.getElementById('t-rate').value)
+  const emp = employees.find((e) => e.name === body.employee)
+  if (rate && emp && rate !== emp.cost_rate) body.rate = rate
+  const date = document.getElementById('t-date').value
+  if (date) body.entry_date = date
+  try {
+    const r = await api('/api/time-entries', { method: 'POST', body: JSON.stringify(body) })
+    toast(`${r.number}: time logged`)
+    document.getElementById('t-hours').value = ''
+    await render()
+  } catch (e) { toast(e.message, true) }
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

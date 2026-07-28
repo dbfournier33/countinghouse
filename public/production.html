@@ -36,9 +36,12 @@ pageShell({
 })
 
 async function render() {
-  const [items, wcs, wos] = await Promise.all([
-    api('/api/items'), api('/api/work-centers'), api('/api/work-orders'),
+  const [items, wcs, wos, employees] = await Promise.all([
+    api('/api/items'), api('/api/work-centers'), api('/api/work-orders'), api('/api/employees'),
   ])
+  const empOptions =
+    employees.map((e) => `<option value="${e.name}" data-rate="${e.cost_rate}">${e.name}</option>`).join('') +
+    '<option value="">— name only —</option>'
   const makeable = items.filter((i) => i.kind === 'finished' || i.kind === 'subassembly')
   document.getElementById('wo-sku').replaceChildren(
     el(makeable.map((i) => `<option value="${i.sku}">${i.sku} — ${i.name}</option>`).join('')),
@@ -71,10 +74,10 @@ async function render() {
         <td>
           <div class="actions">${acts.join('') || '<span class="muted">—</span>'}</div>
           <div class="formrow timeform" data-for="${w.id}" style="display:none; margin-top:6px">
+            <select class="t-person">${empOptions}</select>
             <input class="qty t-hours" type="number" min="0" step="any" placeholder="hours" />
-            <input class="qty t-rate" type="number" min="0" step="any" value="38" title="loaded rate $/h" />
-            <input class="t-person" placeholder="person" style="width:110px" />
-            <button class="small t-save" data-id="${w.id}">Save</button>
+            <input class="qty t-rate" type="number" min="0" step="any" title="loaded rate $/h" />
+            <button class="small t-save" data-wo="${w.number}">Save</button>
           </div>
         </td>
       </tr>`
@@ -101,17 +104,24 @@ async function render() {
       f.style.display = f.style.display === 'none' ? 'flex' : 'none'
     }),
   )
+  document.querySelectorAll('.timeform .t-person').forEach((sel) => {
+    const sync = () => {
+      const rate = sel.selectedOptions[0]?.dataset.rate
+      if (rate) sel.closest('.timeform').querySelector('.t-rate').value = rate
+    }
+    sel.addEventListener('change', sync)
+    sync()
+  })
   document.querySelectorAll('.t-save').forEach((b) =>
     b.addEventListener('click', async () => {
       const f = b.closest('.timeform')
-      const body = {
-        hours: Number(f.querySelector('.t-hours').value),
-        loaded_rate: Number(f.querySelector('.t-rate').value),
-      }
-      const person = f.querySelector('.t-person').value.trim()
-      if (person) body.person = person
+      const employee = f.querySelector('.t-person').value
+      const body = { work_order: b.dataset.wo, hours: Number(f.querySelector('.t-hours').value) }
+      const rate = Number(f.querySelector('.t-rate').value)
+      if (employee) body.employee = employee
+      if (rate) body.rate = rate
       try {
-        const r = await api(`/api/work-orders/${b.dataset.id}/log-time`, { method: 'POST', body: JSON.stringify(body) })
+        const r = await api('/api/time-entries', { method: 'POST', body: JSON.stringify(body) })
         toast(`${r.number}: time logged`)
         await render()
       } catch (e) {
