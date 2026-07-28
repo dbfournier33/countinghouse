@@ -135,7 +135,21 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
   app.get('/api/invoices', async (c) => c.json(await listInvoices(db, c.var.tenantId)))
   app.post('/api/invoices/:id/record-payment', wrap(async (c) =>
     c.json(await recordInvoicePayment(db, c.var.tenantId, pid(c)))))
-  app.get('/api/financials', async (c) => c.json(await financials(db, c.var.tenantId)))
+  app.get('/api/financials', wrap(async (c) => {
+    const from = c.req.query('from')
+    const to = c.req.query('to')
+    const dv = /^\d{4}-\d{2}-\d{2}$/
+    const period: { from?: string; to?: string } = {}
+    if (from) {
+      if (!dv.test(from)) return c.json({ error: 'from must be YYYY-MM-DD' }, 422)
+      period.from = from
+    }
+    if (to) {
+      if (!dv.test(to)) return c.json({ error: 'to must be YYYY-MM-DD' }, 422)
+      period.to = to
+    }
+    return c.json(await financials(db, c.var.tenantId, period))
+  }))
   app.get('/api/close-checks', async (c) => c.json(await closeChecks(db, c.var.tenantId)))
 
   // --- QuickBooks bridge ---------------------------------------------------

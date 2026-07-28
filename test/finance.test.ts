@@ -176,6 +176,27 @@ describe('financials & close', () => {
     expect(bs.liabilities_total).toBe(225) // GRNI 200 (PO not yet billed) + open rent bill 25
   })
 
+  it('P&L respects the period; balance sheet stays cumulative and balanced', async () => {
+    const t = await setupTenant()
+    const { ingest } = await import('../src/events.js')
+    await ingest(db, t, {
+      type: 'InvoiceIssued', payload: { amount: 100 }, occurred_at: '2026-06-15T12:00:00.000Z',
+    })
+    await ingest(db, t, {
+      type: 'InvoiceIssued', payload: { amount: 250 }, occurred_at: '2026-07-10T12:00:00.000Z',
+    })
+    const july = await financials(db, t, { from: '2026-07-01', to: '2026-07-31' })
+    expect(july.income_statement.revenue_total).toBe(250) // June excluded
+    expect(july.balance_sheet.net_income).toBe(350) // cumulative through July
+    expect(july.balance_sheet.balanced).toBe(true)
+    expect(july.balance_sheet.assets_total).toBe(350) // AR holds both invoices
+
+    const june = await financials(db, t, { from: '2026-06-01', to: '2026-06-30' })
+    expect(june.income_statement.revenue_total).toBe(100)
+    expect(june.balance_sheet.net_income).toBe(100) // cumulative through June only
+    expect(june.balance_sheet.balanced).toBe(true)
+  })
+
   it('close checks: reconciliation holds; GRNI flags unbilled receipts until billed', async () => {
     const checks = await closeChecks(db, t)
     const byLabel = Object.fromEntries(checks.map((c) => [c.label, c]))

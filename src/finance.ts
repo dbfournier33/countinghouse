@@ -147,7 +147,11 @@ interface AccountBalance {
   balance: number
 }
 
-async function accountBalances(db: PGlite, tenantId: string): Promise<AccountBalance[]> {
+async function accountBalances(
+  db: PGlite,
+  tenantId: string,
+  period?: { from?: string; to?: string },
+): Promise<AccountBalance[]> {
   const r = await db.query<{
     code: string
     name: string
@@ -161,10 +165,14 @@ async function accountBalances(db: PGlite, tenantId: string): Promise<AccountBal
             coalesce(sum(case when jl.side = 'credit' then jl.amount end), 0) as c
      from accounts a
      left join journal_lines jl on jl.account_id = a.id and jl.tenant_id = a.tenant_id
+     left join journal_entries je on je.id = jl.entry_id
      where a.tenant_id = $1
+       and (jl.id is null or (
+         (cast($2 as date) is null or je.entry_date >= $2)
+         and (cast($3 as date) is null or je.entry_date <= $3)))
      group by a.code, a.name, a.kind, a.normal_side
      order by a.code`,
-    [tenantId],
+    [tenantId, period?.from ?? null, period?.to ?? null],
   )
   return r.rows.map((row) => ({
     code: row.code,
@@ -176,8 +184,11 @@ async function accountBalances(db: PGlite, tenantId: string): Promise<AccountBal
   }))
 }
 
-export async function financials(db: PGlite, tenantId: string) {
-  const balances = await accountBalances(db, tenantId)
+// The income statement respects the period; the balance sheet is always
+// cumulative through `to` (a balance sheet has no "from"), with net income
+// measured inception-to-date so it balances by construction.
+export async function financials(db: PGlite, tenantId: string, period?: { from?: string; to?: string }) {
+  const balances = await accountBalances(db, tenantId, period)
   const line = (a: AccountBalance) => ({ code: a.code, name: a.name, amount: a.balance })
 
   const revenue = balances.filter((a) => a.kind === 'revenue')
@@ -196,14 +207,28 @@ export async function financials(db: PGlite, tenantId: string) {
   const opexTotal = round2(opexLines.reduce((s, a) => s + a.amount, 0))
   const netIncome = round2(grossProfit - opexTotal)
 
-  const assets = balances.filter((a) => a.kind === 'asset')
-  const liabilities = balances.filter((a) => a.kind === 'liability')
-  const equity = balances.filter((a) => a.kind === 'equity')
+  const bsBalances = period?.from
+    ? await accountBalances(db, tenantId, { to: period?.to })
+    : balances
+  const bsNet = (kinds: string[]) =>
+    round2(
+      bsBalances
+        .filter((a) => kinds.includes(a.kind))
+        .reduce((s, a) => s + (a.normal_side === 'credit' ? a.balance : -a.balance), 0),
+    )
+  const assets = bsBalances.filter((a) => a.kind === 'asset')
+  const liabilities = bsBalances.filter((a) => a.kind === 'liability')
+  const equity = bsBalances.filter((a) => a.kind === 'equity')
   const assetsTotal = round2(assets.reduce((s, a) => s + a.balance, 0))
   const liabilitiesTotal = round2(liabilities.reduce((s, a) => s + a.balance, 0))
   const equityTotal = round2(equity.reduce((s, a) => s + a.balance, 0))
+  // Inception-to-date net income = revenue − expenses over ALL time through `to`
+  // (credit-normal accounts add, debit-normal subtract — contra accounts fall
+  // out correctly on both sides).
+  const cumulativeNetIncome = round2(bsNet(['revenue', 'expense']))
 
   return {
+    period: { from: period?.from ?? null, to: period?.to ?? null },
     income_statement: {
       revenue: revenue.map(line),
       revenue_total: revenueTotal,
@@ -221,8 +246,8 @@ export async function financials(db: PGlite, tenantId: string) {
       liabilities_total: liabilitiesTotal,
       equity: equity.map(line),
       equity_total: equityTotal,
-      net_income: netIncome,
-      balanced: Math.abs(assetsTotal - (liabilitiesTotal + equityTotal + netIncome)) < 0.005,
+      net_income: cumulativeNetIncome,
+      balanced: Math.abs(assetsTotal - (liabilitiesTotal + equityTotal + cumulativeNetIncome)) < 0.005,
     },
   }
 }

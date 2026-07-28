@@ -12,9 +12,22 @@
     <h2>Close checklist — filled in by the system</h2>
     <table id="checks"></table>
   </section>
+  <section class="card">
+    <div class="formrow">
+      <label class="muted" style="font-size:13px">P&L period</label>
+      <input id="p-from" type="date" />
+      <label class="muted" style="font-size:13px">to</label>
+      <input id="p-to" type="date" />
+      <button class="small" id="p-apply">Apply</button>
+      <button class="small" id="p-month">This month</button>
+      <button class="small" id="p-all">All time</button>
+      <span class="muted" style="font-size:13px">balance sheet is always as-of the end date</span>
+    </div>
+  </section>
+
   <div class="cols">
     <section class="card">
-      <h2>Income statement — to date</h2>
+      <h2 id="pnl-title">Income statement — to date</h2>
       <table id="pnl"></table>
     </section>
     <section class="card">
@@ -37,7 +50,18 @@ const ICON = { ok: '✓', info: '·', attention: '⚠' }
 const CLS = { ok: 'ok', info: 'muted', attention: 'err' }
 
 async function render() {
-  const [checks, fin] = await Promise.all([api('/api/close-checks'), api('/api/financials')])
+  const from = document.getElementById('p-from').value
+  const to = document.getElementById('p-to').value
+  const qs = new URLSearchParams()
+  if (from) qs.set('from', from)
+  if (to) qs.set('to', to)
+  const [checks, fin] = await Promise.all([
+    api('/api/close-checks'),
+    api('/api/financials' + (qs.size ? `?${qs}` : '')),
+  ])
+  document.getElementById('pnl-title').textContent = from || to
+    ? `Income statement — ${from || 'inception'} → ${to || 'today'}`
+    : 'Income statement — to date'
   const is = fin.income_statement
   const bs = fin.balance_sheet
 
@@ -82,13 +106,27 @@ async function render() {
       ${totalRow('Total liabilities', bs.liabilities_total)}
       <tr><td colspan="2" style="font-weight:650; padding-top:12px">Equity</td></tr>
       ${bs.equity.map((l) => row(l, true)).join('')}
-      <tr><td style="padding-left:22px">Current period net income</td><td class="num">${usd(bs.net_income)}</td></tr>
+      <tr><td style="padding-left:22px">Net income — inception to date</td><td class="num">${usd(bs.net_income)}</td></tr>
       ${totalRow('Liabilities + equity', bs.liabilities_total + bs.equity_total + bs.net_income, true)}
       <tr><td colspan="2" class="${bs.balanced ? 'ok' : 'err'}" style="font-size:13px; padding-top:8px">
         ${bs.balanced ? '✓ balances to total assets' : '✗ DOES NOT BALANCE'}</td></tr>
     </tbody>
   `))
 }
+document.getElementById('p-apply').addEventListener('click', () => render().catch((e) => toast(e.message, true)))
+document.getElementById('p-all').addEventListener('click', () => {
+  document.getElementById('p-from').value = ''
+  document.getElementById('p-to').value = ''
+  render().catch((e) => toast(e.message, true))
+})
+document.getElementById('p-month').addEventListener('click', () => {
+  const now = new Date()
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  document.getElementById('p-from').value = iso(new Date(now.getFullYear(), now.getMonth(), 1))
+  document.getElementById('p-to').value = iso(now)
+  render().catch((e) => toast(e.message, true))
+})
+
 render().catch((e) => toast(e.message, true))
 </script>
 </body>
