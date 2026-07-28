@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Reports</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <div class="formrow">
+      <h2 style="margin:0">Job cost — planned vs actual, per work order</h2>
+      <button class="small" id="export" style="margin-left:auto">Download CSV</button>
+    </div>
+    <table id="jobs"></table>
+    <div class="muted" style="font-size:13px; margin-top:8px">
+      Plan = BOM at current average costs + estimated hours (no standard-cost maintenance, on purpose).
+      Actual = what the events said. Click a work order for the component and labor breakdown.
+    </div>
+  </section>
+  <section class="card" id="detail-card" style="display:none">
+    <h2 id="detail-title">Detail</h2>
+    <div class="cols">
+      <div>
+        <h2 style="margin-top:8px">Materials</h2>
+        <table id="detail-components"></table>
+      </div>
+      <div>
+        <h2 style="margin-top:8px">Labor</h2>
+        <table id="detail-time"></table>
+      </div>
+    </div>
+  </section>
+  <footer>The variance column is the month-end conversation, available every day. Yield below 100% is scrap you can see the moment it happens.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, statusBadge, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'reports',
+  title: 'Reports',
+  subtitle: 'Job costs first; more reports as real use demands them.',
+})
+
+let rows = []
+
+const varCell = (v, base) => {
+  if (Math.abs(v) < 0.005) return '<span class="muted">—</span>'
+  const pct = base > 0 ? ` (${v > 0 ? '+' : ''}${Math.round((v / base) * 100)}%)` : ''
+  return `<span class="${v > 0 ? 'err' : 'ok'}">${v > 0 ? '+' : '−'}${usd(Math.abs(v))}${pct}</span>`
+}
+
+async function render() {
+  rows = await api('/api/reports/job-cost')
+  document.getElementById('jobs').replaceChildren(el(`
+    <thead><tr>
+      <th>WO</th><th>Make</th><th>Status</th><th class="num">Yield</th>
+      <th class="num">Materials plan</th><th class="num">Materials actual</th><th class="num">Variance</th>
+      <th class="num">Hours plan/act</th><th class="num">Labor $</th><th class="num">Unit cost</th>
+    </tr></thead>
+    <tbody>${rows.map((r) => `
+      <tr style="cursor:pointer" class="jobrow" data-wo="${r.number}">
+        <td class="code" style="color:var(--accent)">${r.number}</td>
+        <td>${qtyFmt(r.qty_ordered)} × ${r.sku}</td>
+        <td>${statusBadge(r.status)}</td>
+        <td class="num">${r.yield_pct === null ? '<span class="muted">—</span>' : qtyFmt(r.yield_pct) + '%'}</td>
+        <td class="num">${usd(r.planned_materials)}</td>
+        <td class="num">${usd(r.actual_materials)}</td>
+        <td class="num">${varCell(r.materials_variance, r.planned_materials)}</td>
+        <td class="num">${qtyFmt(r.planned_hours)} / ${qtyFmt(r.actual_hours)}</td>
+        <td class="num">${r.actual_labor ? usd(r.actual_labor) : '<span class="muted">—</span>'}</td>
+        <td class="num">${r.actual_unit_cost === null ? '<span class="muted">—</span>' : usd(r.actual_unit_cost)}</td>
+      </tr>`).join('') || '<tr><td colspan="10" class="muted">no work orders yet</td></tr>'}
+    </tbody>
+  `))
+  document.querySelectorAll('.jobrow').forEach((tr) =>
+    tr.addEventListener('click', () => showDetail(tr.dataset.wo).catch((e) => toast(e.message, true))),
+  )
+}
+
+async function showDetail(number) {
+  const d = await api(`/api/reports/job-cost/${number}`)
+  document.getElementById('detail-card').style.display = ''
+  document.getElementById('detail-title').textContent =
+    `${d.number} — ${qtyFmt(d.qty_ordered)} × ${d.item}` +
+    (d.actual_unit_cost !== null ? ` · actual unit cost ${usd(d.actual_unit_cost)}` : '')
+  document.getElementById('detail-components').replaceChildren(el(`
+    <thead><tr><th>Component</th><th class="num">Req / issued</th><th class="num">Plan</th><th class="num">Actual</th><th class="num">Var</th></tr></thead>
+    <tbody>${d.components.map((c) => `
+      <tr>
+        <td>${c.name} <span class="muted" style="font-size:12px">${c.sku}</span></td>
+        <td class="num">${qtyFmt(c.qty_required)} / ${qtyFmt(c.qty_issued)}</td>
+        <td class="num">${usd(c.planned_cost)}</td>
+        <td class="num">${usd(c.actual_cost)}</td>
+        <td class="num">${varCell(c.variance, c.planned_cost)}</td>
+      </tr>`).join('')}
+    </tbody>
+  `))
+  document.getElementById('detail-time').replaceChildren(el(`
+    <thead><tr><th>Date</th><th>Person</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Cost</th></tr></thead>
+    <tbody>${d.time_entries.map((t) => `
+      <tr>
+        <td style="font-size:13px">${t.date}</td><td>${t.person}</td>
+        <td class="num">${qtyFmt(t.hours)}</td><td class="num">${usd(t.rate)}/h</td><td class="num">${usd(t.cost)}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="muted">no time logged</td></tr>'}
+    </tbody>
+  `))
+  document.getElementById('detail-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+
+document.getElementById('export').addEventListener('click', () => {
+  const esc = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`
+  const cols = ['number', 'sku', 'status', 'qty_ordered', 'qty_completed', 'yield_pct',
+    'planned_materials', 'actual_materials', 'materials_variance',
+    'planned_hours', 'actual_hours', 'actual_labor', 'actual_unit_cost']
+  const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = 'job-costs.csv'
+  a.click()
+  URL.revokeObjectURL(a.href)
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

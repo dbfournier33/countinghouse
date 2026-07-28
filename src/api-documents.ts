@@ -18,6 +18,7 @@ import { analyze, commit, type ImportKind } from './importer.js'
 import { createChannelSettlement, listChannelSettlements, recordChannelShipments } from './channels.js'
 import { autoMatch, importBankCsv, manualMatch, reconciliation, setTxnStatus } from './bank.js'
 import { lotsOnHand, trace } from './lots.js'
+import { jobCostDetail, jobCostList } from './reports.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -183,6 +184,14 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
       })
       .parse(await c.req.json())
     return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
+  }))
+
+  // --- reports -------------------------------------------------------------
+  app.get('/api/reports/job-cost', async (c) => c.json(await jobCostList(db, c.var.tenantId)))
+  app.get('/api/reports/job-cost/:number', wrap(async (c) => {
+    const detail = await jobCostDetail(db, c.var.tenantId, pid(c, 'number'))
+    if (!detail) return c.json({ error: `unknown work order "${pid(c, 'number')}"` }, 404)
+    return c.json(detail)
   }))
 
   // --- lot traceability ----------------------------------------------------

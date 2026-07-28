@@ -140,6 +140,18 @@ export const TOOLS: ToolDef[] = [
     run: async (a, api) => j(await api(`/api/trace?lot=${encodeURIComponent(a.lot_no)}`)),
   },
   {
+    name: 'get_job_cost',
+    description:
+      'Job cost report: planned vs actual materials, hours, labor, yield, and unit cost per work order. Omit work_order for the full list; pass one for the component/labor breakdown.',
+    schema: { work_order: z.string().optional().describe('work order number for detail, e.g. WO-1001') },
+    run: async (a, api) =>
+      j(
+        a.work_order
+          ? await api(`/api/reports/job-cost/${encodeURIComponent(a.work_order)}`)
+          : await api('/api/reports/job-cost'),
+      ),
+  },
+  {
     name: 'record_time_entry',
     description:
       'Log labor time against a released/in-progress work order. With an employee name the roster rate applies automatically; labor cost posts into the job WIP immediately.',
