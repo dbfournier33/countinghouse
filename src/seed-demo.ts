@@ -20,6 +20,10 @@ const db = await openDb('.data/kernel')
 const tenantId = await provisionTenant(db, 'Big Sur Provisions', 'dev-bigsur')
 const log = (s: string) => console.log(s)
 
+const { createUser } = await import('./auth.js')
+await createUser(db, tenantId, { email: 'don@bigsur.test', name: 'Don', password: 'granola-demo' })
+log('user: don@bigsur.test / granola-demo')
+
 // --- masters ---------------------------------------------------------------
 const items: Array<[string, string, 'raw' | 'finished', string, number]> = [
   ['OATS', 'Rolled oats', 'raw', 'kg', 400],

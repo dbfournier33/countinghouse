@@ -1,18 +1,60 @@
 import { Hono } from 'hono'
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { PGlite } from '@electric-sql/pglite'
 import { z } from 'zod'
 import { mountDocumentRoutes } from './api-documents.js'
+import { login, logout, sessionLookup } from './auth.js'
 import { EventSchemas, ingest, KernelError, type EventType } from './events.js'
 import { num, round2 } from './money.js'
 
-type Env = { Variables: { tenantId: string } }
+type Env = { Variables: { tenantId: string; userName?: string } }
+
+const SESSION_COOKIE = 'serp_session'
 
 export function createApp(db: PGlite) {
   const app = new Hono<Env>()
 
+  // --- auth: session cookie (browser) or bearer token (API clients) --------
+  app.post('/auth/login', async (c) => {
+    const body = await c.req.json().catch(() => null)
+    if (!body?.email || !body?.password) return c.json({ error: 'email and password required' }, 400)
+    try {
+      const s = await login(db, String(body.email), String(body.password))
+      setCookie(c, SESSION_COOKIE, s.token, {
+        httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 7 * 86_400,
+      })
+      return c.json({ user: s.user })
+    } catch (e) {
+      if (e instanceof KernelError) return c.json({ error: e.message }, 401)
+      throw e
+    }
+  })
+  app.post('/auth/logout', async (c) => {
+    const token = getCookie(c, SESSION_COOKIE)
+    if (token) await logout(db, token)
+    deleteCookie(c, SESSION_COOKIE, { path: '/' })
+    return c.json({ ok: true })
+  })
+  app.get('/auth/me', async (c) => {
+    const token = getCookie(c, SESSION_COOKIE)
+    const session = token ? await sessionLookup(db, token) : null
+    if (!session) return c.json({ error: 'not signed in' }, 401)
+    const tenant = await db.query<{ name: string }>('select name from tenants where id = $1', [session.tenant_id])
+    return c.json({ user: { name: session.name, email: session.email }, tenant: tenant.rows[0]?.name })
+  })
+
   app.use('/api/*', async (c, next) => {
+    const cookieToken = getCookie(c, SESSION_COOKIE)
+    if (cookieToken) {
+      const session = await sessionLookup(db, cookieToken)
+      if (session) {
+        c.set('tenantId', session.tenant_id)
+        c.set('userName', session.name)
+        return next()
+      }
+    }
     const token = (c.req.header('authorization') ?? '').replace(/^Bearer\s+/i, '')
-    if (!token) return c.json({ error: 'missing bearer token' }, 401)
+    if (!token) return c.json({ error: 'not signed in' }, 401)
     const r = await db.query<{ id: string }>('select id from tenants where token = $1', [token])
     if (!r.rows[0]) return c.json({ error: 'invalid token' }, 401)
     c.set('tenantId', r.rows[0].id)

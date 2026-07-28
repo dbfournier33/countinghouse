@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Sign in</title>
+<link rel="stylesheet" href="/app.css" />
+<style>
+  .login-wrap { max-width: 380px; margin: 12vh auto 0; padding: 0 24px; }
+  .login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 26px 26px 22px; }
+  .login-card input { width: 100%; margin-bottom: 10px; }
+  .login-card button { width: 100%; padding: 11px; }
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <header style="margin-bottom:14px">
+    <h1>Simple ERP</h1>
+    <span class="badge">SIGN IN</span>
+  </header>
+  <div class="login-card">
+    <input id="email" type="email" placeholder="email" autocomplete="username" />
+    <input id="password" type="password" placeholder="password" autocomplete="current-password" />
+    <button class="primary" id="go">Sign in</button>
+    <div id="msg" style="margin-top:10px; font-size:13px"></div>
+  </div>
+  <footer style="margin-top:14px">Demo tenant: <code>don@bigsur.test</code> / <code>granola-demo</code></footer>
+</div>
+<script>
+async function signIn() {
+  const msg = document.getElementById('msg')
+  msg.className = ''
+  msg.textContent = 'signing in…'
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value,
+      }),
+    })
+    const body = await res.json()
+    if (!res.ok) throw new Error(body.error ?? res.statusText)
+    location.href = '/'
+  } catch (e) {
+    msg.className = 'err'
+    msg.textContent = e.message
+  }
+}
+document.getElementById('go').addEventListener('click', signIn)
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn() })
+document.getElementById('email').focus()
+</script>
+</body>
+</html>

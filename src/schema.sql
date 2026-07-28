@@ -8,6 +8,24 @@ create table if not exists tenants (
   created_at timestamptz not null default now()
 );
 
+create table if not exists users (
+  id            uuid primary key default gen_random_uuid(),
+  tenant_id     uuid not null references tenants(id),
+  email         text not null,
+  name          text not null,
+  password_hash text not null, -- scrypt salt:hash, hex
+  created_at    timestamptz not null default now(),
+  unique (tenant_id, email)
+);
+
+create table if not exists sessions (
+  token      uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  user_id    uuid not null references users(id),
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists parties (
   id         uuid primary key default gen_random_uuid(),
   tenant_id  uuid not null references tenants(id),

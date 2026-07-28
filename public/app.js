@@ -1,13 +1,17 @@
-export const TOKEN = 'dev-bigsur'
-
 export const usd = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 export const qtyFmt = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 })
 
+// The browser authenticates with the session cookie; a 401 sends you to sign
+// in. (API clients use the bearer token instead — see README.)
 export async function api(path, opts = {}) {
   const res = await fetch(path, {
     ...opts,
-    headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
+    headers: { 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
   })
+  if (res.status === 401 && !location.pathname.startsWith('/login')) {
+    location.href = '/login.html'
+    throw new Error('signed out')
+  }
   const body = await res.json()
   if (!res.ok) throw new Error(body.error ?? res.statusText)
   return body
@@ -66,11 +70,25 @@ export function pageShell({ active, title, subtitle }) {
     'afterbegin',
     `<header>
        <h1>Simple ERP</h1><span class="badge">PHASE 1</span>
-       <span class="tenant">Big Sur Provisions</span>
+       <span class="tenant" id="whoami"></span>
      </header>
      <div id="nav"></div>
      <p class="sub">${subtitle}</p>`,
   )
   document.title = `Simple ERP — ${title}`
   mountNav(active)
+  fetch('/auth/me')
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((me) => {
+      document.getElementById('whoami').innerHTML =
+        `${me.tenant} · ${me.user.name} <a href="#" id="logout" style="color:var(--ink-3); font-size:12px">sign out</a>`
+      document.getElementById('logout').addEventListener('click', async (e) => {
+        e.preventDefault()
+        await fetch('/auth/logout', { method: 'POST' })
+        location.href = '/login.html'
+      })
+    })
+    .catch(() => {
+      if (!location.pathname.startsWith('/login')) location.href = '/login.html'
+    })
 }
