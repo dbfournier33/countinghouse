@@ -23,30 +23,46 @@ export function el(html) {
   return t.content
 }
 
-const PAGES = [
-  ['dashboard', '/', 'Dashboard'],
-  ['import', '/import.html', 'Import'],
-  ['planning', '/planning.html', 'Planning'],
-  ['purchasing', '/purchasing.html', 'Purchasing'],
-  ['sales', '/sales.html', 'Sales'],
-  ['channels', '/channels.html', 'Channels'],
-  ['production', '/production.html', 'Production'],
-  ['trace', '/trace.html', 'Trace'],
-  ['capacity', '/capacity.html', 'Capacity'],
-  ['people', '/people.html', 'People'],
-  ['finance', '/finance.html', 'Finance'],
-  ['bank', '/bank.html', 'Bank'],
-  ['financials', '/financials.html', 'Financials'],
-  ['reports', '/reports.html', 'Reports'],
-  ['qb', '/qb.html', 'QuickBooks'],
+// Pages grouped for the two-tier nav: group row on top, that group's pages
+// below. Dashboard stands alone.
+const GROUPS = [
+  ['dashboard', 'Dashboard', [['dashboard', '/', 'Dashboard']]],
+  ['operations', 'Operations', [
+    ['planning', '/planning.html', 'Planning'],
+    ['purchasing', '/purchasing.html', 'Purchasing'],
+    ['sales', '/sales.html', 'Sales'],
+    ['channels', '/channels.html', 'Channels'],
+    ['production', '/production.html', 'Production'],
+    ['trace', '/trace.html', 'Trace'],
+    ['capacity', '/capacity.html', 'Capacity'],
+    ['people', '/people.html', 'People'],
+  ]],
+  ['money', 'Money', [
+    ['finance', '/finance.html', 'Finance'],
+    ['bank', '/bank.html', 'Bank'],
+    ['financials', '/financials.html', 'Financials'],
+    ['reports', '/reports.html', 'Reports'],
+    ['qb', '/qb.html', 'QuickBooks'],
+  ]],
+  ['setup', 'Setup', [['import', '/import.html', 'Import']]],
 ]
 
 export function mountNav(active) {
   const nav = document.getElementById('nav')
   if (!nav) return
-  nav.outerHTML = `<nav class="tabs">${PAGES.map(
-    ([key, href, label]) => `<a href="${href}" class="${key === active ? 'active' : ''}">${label}</a>`,
-  ).join('')}</nav>`
+  const activeGroup =
+    GROUPS.find(([, , pages]) => pages.some(([key]) => key === active)) ?? GROUPS[0]
+  const groupRow = GROUPS.map(
+    ([gkey, glabel, pages]) =>
+      `<a href="${pages[0][1]}" class="${gkey === activeGroup[0] ? 'active' : ''}">${glabel}</a>`,
+  ).join('')
+  const pageRow =
+    activeGroup[2].length > 1
+      ? `<nav class="tabs subtabs">${activeGroup[2]
+          .map(([key, href, label]) => `<a href="${href}" class="${key === active ? 'active' : ''}">${label}</a>`)
+          .join('')}</nav>`
+      : ''
+  nav.outerHTML = `<div id="navwrap"><nav class="tabs">${groupRow}</nav>${pageRow}</div>`
 }
 
 let toastTimer
