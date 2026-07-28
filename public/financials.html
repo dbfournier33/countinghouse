@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Financials</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Close checklist — filled in by the system</h2>
+    <table id="checks"></table>
+  </section>
+  <div class="cols">
+    <section class="card">
+      <h2>Income statement — to date</h2>
+      <table id="pnl"></table>
+    </section>
+    <section class="card">
+      <h2>Balance sheet</h2>
+      <table id="bs"></table>
+    </section>
+  </div>
+  <footer>Statements are a straight read of the ledger — which is itself a projection of operational events. Nothing here was entered, synced, or reconciled by a person.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'financials',
+  title: 'Financials',
+  subtitle: 'P&L, balance sheet, and the month-end checklist — live, not compiled.',
+})
+
+const ICON = { ok: '✓', info: '·', attention: '⚠' }
+const CLS = { ok: 'ok', info: 'muted', attention: 'err' }
+
+async function render() {
+  const [checks, fin] = await Promise.all([api('/api/close-checks'), api('/api/financials')])
+  const is = fin.income_statement
+  const bs = fin.balance_sheet
+
+  document.getElementById('checks').replaceChildren(el(`
+    <tbody>${checks.map((c) => `
+      <tr>
+        <td style="width:24px" class="${CLS[c.status]}">${ICON[c.status]}</td>
+        <td style="width:280px; font-weight:600">${c.label}</td>
+        <td class="muted" style="font-size:13px">${c.detail}</td>
+      </tr>`).join('')}
+    </tbody>
+  `))
+
+  const row = (l, indent = false) =>
+    `<tr><td ${indent ? 'style="padding-left:22px"' : ''}>${l.name} <span class="code muted" style="font-size:11px">${l.code}</span></td>
+     <td class="num">${usd(l.amount)}</td></tr>`
+  const totalRow = (label, amount, strong = false) =>
+    `<tr class="${strong ? 'total' : ''}"><td style="font-weight:650">${label}</td><td class="num" style="font-weight:650">${usd(amount)}</td></tr>`
+
+  document.getElementById('pnl').replaceChildren(el(`
+    <tbody>
+      <tr><td colspan="2" style="font-weight:650">Revenue</td></tr>
+      ${is.revenue.map((l) => row(l, true)).join('')}
+      ${totalRow('Total revenue', is.revenue_total)}
+      <tr><td colspan="2" style="font-weight:650; padding-top:12px">Cost of goods sold</td></tr>
+      ${is.cogs.map((l) => row(l, true)).join('')}
+      ${totalRow('Gross profit', is.gross_profit)}
+      <tr><td colspan="2" style="font-weight:650; padding-top:12px">Operating expenses</td></tr>
+      ${is.operating_expenses.map((l) => row(l, true)).join('')}
+      ${totalRow('Total operating expenses', is.operating_expenses_total)}
+      ${totalRow('Net income', is.net_income, true)}
+    </tbody>
+  `))
+
+  document.getElementById('bs').replaceChildren(el(`
+    <tbody>
+      <tr><td colspan="2" style="font-weight:650">Assets</td></tr>
+      ${bs.assets.map((l) => row(l, true)).join('')}
+      ${totalRow('Total assets', bs.assets_total)}
+      <tr><td colspan="2" style="font-weight:650; padding-top:12px">Liabilities</td></tr>
+      ${bs.liabilities.map((l) => row(l, true)).join('')}
+      ${totalRow('Total liabilities', bs.liabilities_total)}
+      <tr><td colspan="2" style="font-weight:650; padding-top:12px">Equity</td></tr>
+      ${bs.equity.map((l) => row(l, true)).join('')}
+      <tr><td style="padding-left:22px">Current period net income</td><td class="num">${usd(bs.net_income)}</td></tr>
+      ${totalRow('Liabilities + equity', bs.liabilities_total + bs.equity_total + bs.net_income, true)}
+      <tr><td colspan="2" class="${bs.balanced ? 'ok' : 'err'}" style="font-size:13px; padding-top:8px">
+        ${bs.balanced ? '✓ balances to total assets' : '✗ DOES NOT BALANCE'}</td></tr>
+    </tbody>
+  `))
+}
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

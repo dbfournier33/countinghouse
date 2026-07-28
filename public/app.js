@@ -26,6 +26,8 @@ const PAGES = [
   ['sales', '/sales.html', 'Sales'],
   ['production', '/production.html', 'Production'],
   ['capacity', '/capacity.html', 'Capacity'],
+  ['finance', '/finance.html', 'Finance'],
+  ['financials', '/financials.html', 'Financials'],
 ]
 
 export function mountNav(active) {

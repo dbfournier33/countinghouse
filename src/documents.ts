@@ -15,7 +15,10 @@ const COUNTERS: Record<string, { prefix: string; start: number }> = {
   SO: { prefix: 'SO', start: 2001 },
   WO: { prefix: 'WO', start: 1001 },
   INV: { prefix: 'INV', start: 2001 },
+  BILL: { prefix: 'BILL', start: 8001 },
 }
+
+export { nextNumber, itemBySku, partyByName, assertStatus }
 
 async function nextNumber(tx: Transaction, tenantId: string, kind: keyof typeof COUNTERS): Promise<string> {
   const { prefix, start } = COUNTERS[kind]
@@ -279,6 +282,11 @@ export async function shipSalesOrder(
           payload: { amount: invoiceAmount, customer: so.customer_name, ref: `${invNumber} · ${so.number}` },
         }),
       )
+      await tx.query(
+        `insert into invoices (tenant_id, number, customer_id, so_id, amount)
+         values ($1, $2, $3, $4, $5)`,
+        [tenantId, invNumber, so.customer_id, soId, invoiceAmount],
+      )
       invoice = { number: invNumber, amount: invoiceAmount }
     }
 
@@ -295,8 +303,14 @@ export async function shipSalesOrder(
 }
 
 async function getSO(tx: Transaction, tenantId: string, soId: string) {
-  const r = await tx.query<{ id: string; number: string; status: string; customer_name: string }>(
-    `select so.id, so.number, so.status, p.name as customer_name
+  const r = await tx.query<{
+    id: string
+    number: string
+    status: string
+    customer_id: string
+    customer_name: string
+  }>(
+    `select so.id, so.number, so.status, so.customer_id, p.name as customer_name
      from sales_orders so join parties p on p.id = so.customer_id
      where so.tenant_id = $1 and so.id = $2`,
     [tenantId, soId],

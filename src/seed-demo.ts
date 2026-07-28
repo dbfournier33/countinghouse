@@ -8,6 +8,7 @@ import {
   issueMaterials, issuePurchaseOrder, logWorkOrderTime, receivePurchaseOrder, releaseWorkOrder,
   shipSalesOrder,
 } from './documents.js'
+import { createBill, payBill, recordInvoicePayment } from './finance.js'
 import { ingest } from './events.js'
 import { num } from './money.js'
 
@@ -32,7 +33,9 @@ for (const [sku, name, kind, uom, reorder] of items) {
 }
 for (const [name, roles] of [
   ['Cascade Farm Supply', ['vendor']],
+  ['Harbor Property Mgmt', ['vendor']],
   ['Ridgeline Market', ['customer']],
+  ['Summit Outfitters', ['customer']],
   ['Maya Torres', ['employee']],
 ] as Array<[string, string[]]>) {
   await db.query('insert into parties (tenant_id, name, roles) values ($1, $2, $3)', [tenantId, name, roles])
@@ -86,9 +89,16 @@ await issuePurchaseOrder(db, tenantId, po2.id)
 await receivePurchaseOrder(db, tenantId, po2.id)
 log(`${po2.number}: issued + received (wrappers)`)
 
-// Bills/payments stay raw events until the Phase 2 finance surface.
-await ingest(db, tenantId, { type: 'BillPosted', payload: { amount: 2500, vendor: 'Cascade Farm Supply', ref: `BILL-8841 · ${po1.number}` } })
-await ingest(db, tenantId, { type: 'PaymentMade', payload: { amount: 2500, ref: 'BILL-8841' } })
+// Phase 2: bills are documents now. PO-1001 gets billed and paid; the wrapper
+// PO stays received-not-billed so the close checklist has something to say.
+const bill1 = await createBill(db, tenantId, {
+  vendor: 'Cascade Farm Supply', amount: 2500, ref: 'BILL-8841', po_number: po1.number,
+})
+await payBill(db, tenantId, bill1.id)
+log(`${bill1.number}: posted against ${po1.number} (relieves GRNI) + paid`)
+
+const rent = await createBill(db, tenantId, { vendor: 'Harbor Property Mgmt', amount: 1800, ref: 'RENT-JUL' })
+log(`${rent.number}: expense bill posted (rent) — left open`)
 
 const so1 = await createSalesOrder(db, tenantId, {
   customer: 'Ridgeline Market',
@@ -108,8 +118,20 @@ log(`${wo1.number}: BOM exploded → ${wo1.components.map((c) => `${c.qty_requir
 
 const shipped = await shipSalesOrder(db, tenantId, so1.id)
 log(`${so1.number}: shipped — auto-invoiced ${shipped.invoice?.number} $${shipped.invoice?.amount}`)
-await ingest(db, tenantId, { type: 'PaymentReceived', payload: { amount: 3400, ref: shipped.invoice!.number } })
+const inv1 = await db.query<{ id: string }>(
+  'select id from invoices where tenant_id = $1 and number = $2', [tenantId, shipped.invoice!.number])
+await recordInvoicePayment(db, tenantId, inv1.rows[0].id)
+log(`${shipped.invoice!.number}: customer payment recorded`)
 await ingest(db, tenantId, { type: 'AdjustmentMade', payload: { sku: 'WRAP', qty_delta: -15, reason: 'damaged roll end' } })
+
+// A wholesale order shipped on terms — open AR for the finance page.
+const so3 = await createSalesOrder(db, tenantId, {
+  customer: 'Summit Outfitters',
+  lines: [{ sku: 'BAR-OG', qty: 300, unit_price: 1.8 }],
+})
+await confirmSalesOrder(db, tenantId, so3.id)
+const shipped3 = await shipSalesOrder(db, tenantId, so3.id)
+log(`${so3.number}: shipped — ${shipped3.invoice?.number} $${shipped3.invoice?.amount} on terms (open AR)`)
 
 // Open commitments so planning and capacity have something to say:
 const so2 = await createSalesOrder(db, tenantId, {

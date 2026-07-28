@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Finance</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>New vendor bill</h2>
+    <div class="formrow">
+      <select id="b-vendor"></select>
+      <input class="money" id="b-amount" type="number" min="0" step="any" placeholder="amount $" />
+      <input id="b-ref" placeholder="bill # (optional)" style="width:140px" />
+      <select id="b-po"></select>
+      <button class="primary" id="b-create">Post bill</button>
+    </div>
+    <div class="muted" style="font-size:13px">Against a PO → relieves goods-received-not-billed. No PO → operating expense. That's the whole decision.</div>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Receivables — invoices</h2>
+      <table id="invoices"></table>
+    </section>
+    <section class="card">
+      <h2>Payables — bills</h2>
+      <table id="bills"></table>
+    </section>
+  </div>
+
+  <footer>Invoices are born on shipment (auto-invoice). Paying a bill posts <span class="codetext">PaymentMade</span>; recording a customer payment posts <span class="codetext">PaymentReceived</span>. Bank feeds and reconciliation are the next slice.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, statusBadge, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'finance',
+  title: 'Finance',
+  subtitle: 'Money in, money out — AR and AP over the same event spine.',
+})
+
+async function render() {
+  const [invoices, bills, parties, pos, tb] = await Promise.all([
+    api('/api/invoices'), api('/api/bills'), api('/api/parties'),
+    api('/api/purchase-orders'), api('/api/trial-balance'),
+  ])
+
+  const cash = tb.accounts.find((a) => a.code === '1110')?.balance ?? 0
+  const arOpen = invoices.filter((i) => i.status === 'open').reduce((s, i) => s + i.amount, 0)
+  const apOpen = bills.filter((b) => b.status === 'open').reduce((s, b) => s + b.amount, 0)
+  const grni = tb.accounts.find((a) => a.code === '2110')?.balance ?? 0
+  document.getElementById('tiles').replaceChildren(el(`
+    <div class="tile"><div class="k">Cash</div><div class="v">${usd(cash)}</div><div class="n">1110</div></div>
+    <div class="tile"><div class="k">Open receivables</div><div class="v">${usd(arOpen)}</div>
+      <div class="n">${invoices.filter((i) => i.status === 'open').length} open invoice(s)</div></div>
+    <div class="tile"><div class="k">Open payables</div><div class="v">${usd(apOpen)}</div>
+      <div class="n">${bills.filter((b) => b.status === 'open').length} open bill(s)</div></div>
+    <div class="tile"><div class="k">Received, not billed</div><div class="v">${usd(grni)}</div><div class="n">GRNI 2110</div></div>
+  `))
+
+  const vendors = parties.filter((p) => p.roles.includes('vendor'))
+  document.getElementById('b-vendor').replaceChildren(
+    el(vendors.map((v) => `<option>${v.name}</option>`).join('') || '<option disabled>no vendors</option>'),
+  )
+  const billablePos = pos.filter((p) => ['partially_received', 'received'].includes(p.status))
+  document.getElementById('b-po').replaceChildren(el(
+    `<option value="">— expense (no PO) —</option>` +
+    billablePos.map((p) => `<option value="${p.number}">${p.number} · ${p.vendor}</option>`).join(''),
+  ))
+
+  document.getElementById('invoices').replaceChildren(el(`
+    <thead><tr><th>Invoice</th><th>Customer</th><th>SO</th><th>Issued</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+    <tbody>${invoices.map((i) => `
+      <tr>
+        <td class="code">${i.number}</td>
+        <td>${i.customer}</td>
+        <td class="code">${i.so_number ?? '—'}</td>
+        <td style="font-size:13px">${i.issued_date}</td>
+        <td class="num">${usd(i.amount)}</td>
+        <td>${statusBadge(i.status)}</td>
+        <td>${i.status === 'open' ? `<button class="small" data-inv="${i.id}">Record payment</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">no invoices yet — invoices are created when you ship</td></tr>'}
+    </tbody>
+  `))
+
+  document.getElementById('bills').replaceChildren(el(`
+    <thead><tr><th>Bill</th><th>Vendor</th><th>Against</th><th>Date</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+    <tbody>${bills.map((b) => `
+      <tr>
+        <td class="code">${b.number}</td>
+        <td>${b.vendor}</td>
+        <td class="code">${b.po_number ?? 'expense'}</td>
+        <td style="font-size:13px">${b.bill_date}</td>
+        <td class="num">${usd(b.amount)}</td>
+        <td>${statusBadge(b.status)}</td>
+        <td>${b.status === 'open' ? `<button class="small" data-bill="${b.id}">Pay</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">no bills yet</td></tr>'}
+    </tbody>
+  `))
+
+  document.querySelectorAll('button[data-inv]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true
+      try {
+        const r = await api(`/api/invoices/${b.dataset.inv}/record-payment`, { method: 'POST', body: '{}' })
+        toast(`${r.number}: paid`)
+        await render()
+      } catch (e) { toast(e.message, true); b.disabled = false }
+    }),
+  )
+  document.querySelectorAll('button[data-bill]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true
+      try {
+        const r = await api(`/api/bills/${b.dataset.bill}/pay`, { method: 'POST', body: '{}' })
+        toast(`${r.number}: paid`)
+        await render()
+      } catch (e) { toast(e.message, true); b.disabled = false }
+    }),
+  )
+}
+
+document.getElementById('b-create').addEventListener('click', async () => {
+  const body = {
+    vendor: document.getElementById('b-vendor').value,
+    amount: Number(document.getElementById('b-amount').value),
+  }
+  const ref = document.getElementById('b-ref').value.trim()
+  if (ref) body.ref = ref
+  const po = document.getElementById('b-po').value
+  if (po) body.po_number = po
+  try {
+    const r = await api('/api/bills', { method: 'POST', body: JSON.stringify(body) })
+    toast(`Posted ${r.number} (${r.kind})`)
+    document.getElementById('b-amount').value = ''
+    document.getElementById('b-ref').value = ''
+    await render()
+  } catch (e) { toast(e.message, true) }
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

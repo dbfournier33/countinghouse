@@ -233,3 +233,37 @@ create table if not exists wo_components (
   qty_required numeric(18,4) not null check (qty_required > 0),
   issued_qty   numeric(18,4) not null default 0
 );
+
+-- ===========================================================================
+-- Phase 2: AR/AP documents. Same rule as Phase 1 — documents track state,
+-- every financial effect is an event through the posting engine.
+-- ===========================================================================
+
+create table if not exists invoices (
+  id          uuid primary key default gen_random_uuid(),
+  tenant_id   uuid not null references tenants(id),
+  number      text not null,
+  customer_id uuid not null references parties(id),
+  so_id       uuid references sales_orders(id),
+  amount      numeric(18,2) not null check (amount > 0),
+  status      text not null default 'open' check (status in ('open', 'paid')),
+  issued_date date not null default current_date,
+  paid_date   date,
+  created_at  timestamptz not null default now(),
+  unique (tenant_id, number)
+);
+
+create table if not exists bills (
+  id        uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id),
+  number    text not null,
+  vendor_id uuid not null references parties(id),
+  po_id     uuid references purchase_orders(id),
+  kind      text not null check (kind in ('inventory', 'expense')),
+  amount    numeric(18,2) not null check (amount > 0),
+  status    text not null default 'open' check (status in ('open', 'paid')),
+  bill_date date not null default current_date,
+  paid_date date,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, number)
+);

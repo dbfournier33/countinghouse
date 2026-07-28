@@ -9,6 +9,9 @@ import {
   listPurchaseOrders, listSalesOrders, listWorkOrders, logWorkOrderTime, planning,
   receivePurchaseOrder, releaseWorkOrder, rescheduleWorkOrder, shipSalesOrder,
 } from './documents.js'
+import {
+  closeChecks, createBill, financials, listBills, listInvoices, payBill, recordInvoicePayment,
+} from './finance.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -112,6 +115,24 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
   }))
   app.get('/api/capacity', async (c) =>
     c.json(await capacity(db, c.var.tenantId, Math.min(Number(c.req.query('days') ?? 14), 60))))
+
+  // --- finance: bills, invoices, statements, close -------------------------
+  const billSchema = z.object({
+    vendor: z.string().min(1),
+    amount: z.number().positive(),
+    ref: z.string().optional(),
+    po_number: z.string().optional(),
+  })
+  app.post('/api/bills', wrap(async (c) =>
+    c.json(await createBill(db, c.var.tenantId, billSchema.parse(await c.req.json())), 201)))
+  app.get('/api/bills', async (c) => c.json(await listBills(db, c.var.tenantId)))
+  app.post('/api/bills/:id/pay', wrap(async (c) =>
+    c.json(await payBill(db, c.var.tenantId, pid(c)))))
+  app.get('/api/invoices', async (c) => c.json(await listInvoices(db, c.var.tenantId)))
+  app.post('/api/invoices/:id/record-payment', wrap(async (c) =>
+    c.json(await recordInvoicePayment(db, c.var.tenantId, pid(c)))))
+  app.get('/api/financials', async (c) => c.json(await financials(db, c.var.tenantId)))
+  app.get('/api/close-checks', async (c) => c.json(await closeChecks(db, c.var.tenantId)))
 
   // --- masters: work centers, BOM, reorder points --------------------------
   app.get('/api/work-centers', async (c) => {

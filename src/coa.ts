@@ -20,6 +20,7 @@ export const COA: CoaAccount[] = [
   { code: '5110', name: 'Cost of goods sold', kind: 'expense', normal: 'debit' },
   { code: '5150', name: 'Inventory shrinkage & adjustments', kind: 'expense', normal: 'debit' },
   { code: '5290', name: 'Direct labor absorbed', kind: 'expense', normal: 'credit' },
+  { code: '6100', name: 'Operating expenses', kind: 'expense', normal: 'debit' },
 ]
 
 // '@inventory' resolves to 1310 or 1350 from the item's kind at posting time.

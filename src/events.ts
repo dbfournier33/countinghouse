@@ -20,6 +20,11 @@ export const EventSchemas = {
     vendor: z.string().optional(),
     ref: z.string().optional(),
   }),
+  ExpenseBillPosted: z.object({
+    amount: z.number().positive(),
+    vendor: z.string().optional(),
+    ref: z.string().optional(),
+  }),
   PaymentMade: z.object({ amount: z.number().positive(), ref: z.string().optional() }),
   MaterialIssued: z.object({
     sku: z.string().min(1),
@@ -287,6 +292,11 @@ export async function ingestTx(
       case 'BillPosted': {
         const { amount, vendor, ref } = p as { amount: number; vendor?: string; ref?: string }
         memo = `Vendor bill${vendor ? ` from ${vendor}` : ''} ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'ExpenseBillPosted': {
+        const { amount, vendor, ref } = p as { amount: number; vendor?: string; ref?: string }
+        memo = `Expense bill${vendor ? ` from ${vendor}` : ''} ${fmtUSD(amount)}${ref ? ` (${ref})` : ''}`
         break
       }
       case 'PaymentMade': {

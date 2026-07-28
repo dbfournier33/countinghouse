@@ -25,6 +25,10 @@ export const POSTING_RULES: Record<string, RuleLine[]> = {
     { account: '2110', side: 'debit', source: 'payload_amount' },
     { account: '2100', side: 'credit', source: 'payload_amount' },
   ],
+  ExpenseBillPosted: [
+    { account: '6100', side: 'debit', source: 'payload_amount' },
+    { account: '2100', side: 'credit', source: 'payload_amount' },
+  ],
   PaymentMade: [
     { account: '2100', side: 'debit', source: 'payload_amount' },
     { account: '1110', side: 'credit', source: 'payload_amount' },
