@@ -30,6 +30,7 @@ const PAGES = [
   ['capacity', '/capacity.html', 'Capacity'],
   ['people', '/people.html', 'People'],
   ['finance', '/finance.html', 'Finance'],
+  ['bank', '/bank.html', 'Bank'],
   ['financials', '/financials.html', 'Financials'],
   ['qb', '/qb.html', 'QuickBooks'],
 ]

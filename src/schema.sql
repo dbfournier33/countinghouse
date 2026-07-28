@@ -311,6 +311,25 @@ alter table bills add constraint bills_kind_check check (kind in ('inventory', '
 -- one row per payout period per channel. Never per-order.
 -- ===========================================================================
 
+-- ===========================================================================
+-- Bank reconciliation: imported statement lines matched against cash (1110)
+-- journal lines. The bank file is the outside world's version of events; the
+-- match table is the proof they agree.
+-- ===========================================================================
+
+create table if not exists bank_transactions (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references tenants(id),
+  txn_date        date not null,
+  description     text not null default '',
+  amount          numeric(18,2) not null, -- deposits positive, withdrawals negative
+  status          text not null default 'unmatched' check (status in ('unmatched', 'matched', 'excluded')),
+  matched_line_id uuid references journal_lines(id),
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists idx_bank_txn_tenant_date on bank_transactions (tenant_id, txn_date desc);
+
 create table if not exists channel_settlements (
   id           uuid primary key default gen_random_uuid(),
   tenant_id    uuid not null references tenants(id),

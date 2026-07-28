@@ -16,6 +16,7 @@ import { compareTrialBalance, getMapping, qbSummary, updateMapping } from './qb-
 import { createEmployee, listEmployees, listTimeEntries, recordTime } from './people.js'
 import { analyze, commit, type ImportKind } from './importer.js'
 import { createChannelSettlement, listChannelSettlements, recordChannelShipments } from './channels.js'
+import { autoMatch, importBankCsv, manualMatch, reconciliation, setTxnStatus } from './bank.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -180,6 +181,26 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
       .parse(await c.req.json())
     return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
   }))
+
+  // --- bank reconciliation -------------------------------------------------
+  app.post('/api/bank/import', wrap(async (c) => {
+    const body = z.object({ csv: z.string().min(1) }).parse(await c.req.json())
+    const imported = await importBankCsv(db, c.var.tenantId, body.csv)
+    const matched = await autoMatch(db, c.var.tenantId)
+    return c.json({ ...imported, auto_matched: matched.matched }, 201)
+  }))
+  app.post('/api/bank/auto-match', wrap(async (c) => c.json(await autoMatch(db, c.var.tenantId))))
+  app.post('/api/bank/match', wrap(async (c) => {
+    const body = z.object({ txn_id: z.string().min(1), line_id: z.string().min(1) }).parse(await c.req.json())
+    return c.json(await manualMatch(db, c.var.tenantId, body.txn_id, body.line_id))
+  }))
+  app.post('/api/bank/txn-status', wrap(async (c) => {
+    const body = z
+      .object({ txn_id: z.string().min(1), status: z.enum(['unmatched', 'excluded']) })
+      .parse(await c.req.json())
+    return c.json(await setTxnStatus(db, c.var.tenantId, body.txn_id, body.status))
+  }))
+  app.get('/api/bank/reconciliation', async (c) => c.json(await reconciliation(db, c.var.tenantId)))
 
   // --- D2C channel settlements ---------------------------------------------
   const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)

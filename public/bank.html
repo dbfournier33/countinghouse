@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Bank</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>Import a bank statement (CSV)</h2>
+    <textarea id="csv" rows="6" style="width:100%; font-family:var(--mono); font-size:12px"
+      placeholder="Date,Description,Amount&#10;07/28/2026,ACH RIDGELINE MKT,3400.00&#10;07/28/2026,CHECK 1041 CASCADE FARM,-2500.00"></textarea>
+    <div class="actions" style="margin-top:8px">
+      <button class="primary" id="import">Import & auto-match</button>
+      <button class="small" id="sample">Fill with a statement matching the demo books</button>
+      <span class="muted" style="font-size:13px">Date/Description/Amount or Debit/Credit columns — we detect either. Re-imports skip duplicates.</span>
+    </div>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Unmatched bank transactions</h2>
+      <table id="unmatched"></table>
+    </section>
+    <section class="card">
+      <h2>Book cash entries not yet on a statement</h2>
+      <table id="bookside"></table>
+    </section>
+  </div>
+
+  <section class="card">
+    <details>
+      <summary>All imported transactions</summary>
+      <table id="all" style="margin-top:10px"></table>
+    </details>
+  </section>
+
+  <footer>Auto-match takes only unambiguous pairs (same amount, right direction, within 5 days) — everything else waits for a human. A live bank feed is a later slice; it lands in this same table.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, statusBadge, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'bank',
+  title: 'Bank',
+  subtitle: 'The outside world’s version of your cash, matched against the books.',
+})
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+async function render() {
+  const rec = await api('/api/bank/reconciliation')
+
+  document.getElementById('tiles').replaceChildren(el(`
+    <div class="tile"><div class="k">Book cash</div><div class="v">${usd(rec.book_cash)}</div><div class="n">ledger 1110</div></div>
+    <div class="tile"><div class="k">Statement total</div><div class="v">${usd(rec.bank_total)}</div><div class="n">imported, non-excluded</div></div>
+    <div class="tile"><div class="k">Difference</div><div class="v">${usd(rec.difference)}</div><div class="n">book − bank</div></div>
+    <div class="tile ${rec.fully_reconciled ? 'ok' : ''}"><div class="k">Status</div>
+      <div class="v">${rec.fully_reconciled ? '✓ Reconciled' : `${rec.unmatched_bank_count} unmatched`}</div>
+      <div class="n">${rec.transactions.length} transaction(s) imported</div></div>
+  `))
+
+  const unmatchedTxns = rec.transactions.filter((t) => t.status === 'unmatched')
+  const openLines = rec.unmatched_book_lines
+  document.getElementById('unmatched').replaceChildren(el(`
+    <thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Match to</th><th></th></tr></thead>
+    <tbody>${unmatchedTxns.map((t) => `
+      <tr>
+        <td style="font-size:13px">${t.txn_date}</td>
+        <td style="font-size:13px">${t.description || '<span class="muted">—</span>'}</td>
+        <td class="num">${usd(t.amount)}</td>
+        <td><select class="m-line" data-txn="${t.id}">
+          <option value="">— pick a cash entry —</option>
+          ${openLines
+            .filter((l) => (t.amount > 0 ? l.side === 'debit' : l.side === 'credit'))
+            .map((l) => `<option value="${l.line_id}">${l.entry_date} · ${usd(l.amount)} · ${l.memo.slice(0, 40)}</option>`)
+            .join('')}
+        </select></td>
+        <td><div class="actions">
+          <button class="small m-go" data-txn="${t.id}">Match</button>
+          <button class="small m-ex" data-txn="${t.id}" title="not a book item (bank fee, transfer)">Exclude</button>
+        </div></td>
+      </tr>`).join('') || '<tr><td colspan="5" class="ok">✓ nothing unmatched</td></tr>'}
+    </tbody>
+  `))
+
+  document.getElementById('bookside').replaceChildren(el(`
+    <thead><tr><th>Date</th><th>Entry</th><th class="num">Amount</th><th></th></tr></thead>
+    <tbody>${openLines.map((l) => `
+      <tr>
+        <td style="font-size:13px">${l.entry_date}</td>
+        <td style="font-size:13px">${l.memo.slice(0, 48)}</td>
+        <td class="num">${l.side === 'debit' ? '' : '−'}${usd(l.amount)}</td>
+        <td class="muted" style="font-size:12px">${l.side === 'debit' ? 'in' : 'out'}</td>
+      </tr>`).join('') || '<tr><td colspan="4" class="ok">✓ every cash entry is on a statement</td></tr>'}
+    </tbody>
+  `))
+
+  document.getElementById('all').replaceChildren(el(`
+    <thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Status</th></tr></thead>
+    <tbody>${rec.transactions.map((t) => `
+      <tr>
+        <td style="font-size:13px">${t.txn_date}</td>
+        <td style="font-size:13px">${t.description}</td>
+        <td class="num">${usd(t.amount)}</td>
+        <td>${statusBadge(t.status)}${t.status !== 'unmatched' ? ` <button class="small m-reset" data-txn="${t.id}">undo</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="4" class="muted">nothing imported yet</td></tr>'}
+    </tbody>
+  `))
+
+  document.querySelectorAll('.m-go').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const sel = document.querySelector(`.m-line[data-txn="${b.dataset.txn}"]`)
+      if (!sel.value) return toast('pick a cash entry to match against', true)
+      try {
+        await api('/api/bank/match', { method: 'POST', body: JSON.stringify({ txn_id: b.dataset.txn, line_id: sel.value }) })
+        toast('matched')
+        await render()
+      } catch (e) { toast(e.message, true) }
+    }),
+  )
+  document.querySelectorAll('.m-ex').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api('/api/bank/txn-status', { method: 'POST', body: JSON.stringify({ txn_id: b.dataset.txn, status: 'excluded' }) })
+        toast('excluded — not a book item')
+        await render()
+      } catch (e) { toast(e.message, true) }
+    }),
+  )
+  document.querySelectorAll('.m-reset').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api('/api/bank/txn-status', { method: 'POST', body: JSON.stringify({ txn_id: b.dataset.txn, status: 'unmatched' }) })
+        await render()
+      } catch (e) { toast(e.message, true) }
+    }),
+  )
+}
+
+document.getElementById('import').addEventListener('click', async () => {
+  const csv = document.getElementById('csv').value
+  if (!csv.trim()) return toast('paste a bank CSV first', true)
+  try {
+    const r = await api('/api/bank/import', { method: 'POST', body: JSON.stringify({ csv }) })
+    toast(`${r.imported} imported (${r.duplicates} duplicate(s) skipped) — ${r.auto_matched} auto-matched`)
+    await render()
+  } catch (e) { toast(e.message, true) }
+})
+
+// A statement that lines up with the seeded books: three real matches plus one
+// bank-only fee to exercise Exclude.
+document.getElementById('sample').addEventListener('click', () => {
+  const today = iso(new Date())
+  const yesterday = iso(new Date(Date.now() - 86_400_000))
+  document.getElementById('csv').value = [
+    'Date,Description,Amount',
+    `${today},ACH DEPOSIT RIDGELINE MKT INV-2001,3400.00`,
+    `${today},CHECK 1041 CASCADE FARM SUPPLY,-2500.00`,
+    `${yesterday},SHOPIFY PAYOUT ST-88213,526.68`,
+    `${yesterday},MONTHLY SERVICE FEE,-15.00`,
+  ].join('\n')
+  toast('Filled — three should auto-match; the bank fee is yours to exclude (or bill)')
+})
+
+render().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>

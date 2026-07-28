@@ -326,6 +326,25 @@ export async function closeChecks(db: PGlite, tenantId: string): Promise<CloseCh
       : 'no cost sitting in WIP',
   })
 
+  const bank = await db.query<{ total: string; unmatched: string }>(
+    `select count(*) as total,
+            count(*) filter (where status = 'unmatched') as unmatched
+     from bank_transactions where tenant_id = $1`,
+    [tenantId],
+  )
+  const bankTotal = Number(bank.rows[0].total)
+  const bankUnmatched = Number(bank.rows[0].unmatched)
+  checks.push({
+    label: 'Bank reconciliation',
+    status: bankTotal === 0 ? 'info' : bankUnmatched > 0 ? 'attention' : 'ok',
+    detail:
+      bankTotal === 0
+        ? 'no bank statement imported yet'
+        : bankUnmatched > 0
+          ? `${bankUnmatched} bank transaction(s) unmatched — see the Bank page`
+          : 'every imported bank transaction is matched to a cash entry',
+  })
+
   const openAR = await db.query<{ n: string; total: string; oldest: string | null }>(
     `select count(*) as n, coalesce(sum(amount), 0) as total, min(issued_date)::text as oldest
      from invoices where tenant_id = $1 and status = 'open'`,
