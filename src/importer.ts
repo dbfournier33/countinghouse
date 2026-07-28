@@ -8,6 +8,8 @@
 // + content inference) behind a clean suggestMapping() seam — an LLM call can
 // slot into the same interface later for the ambiguous tail.
 import type { PGlite } from '@electric-sql/pglite'
+import type { Transaction } from '@electric-sql/pglite'
+import { nextNumber } from './documents.js'
 import { ingestTx, KernelError } from './events.js'
 import { num, round2, round4 } from './money.js'
 
@@ -59,7 +61,16 @@ const numeric = (s: string): number | null => {
 // Field specs & header synonyms
 // ---------------------------------------------------------------------------
 
-export type ImportKind = 'items' | 'parties' | 'bom'
+export type ImportKind = 'items' | 'parties' | 'bom' | 'open_invoices' | 'open_bills'
+
+// Accept the date shapes migration exports actually contain.
+function parseDate(s: string): string | null {
+  const t = s.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
+  const us = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (us) return `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
+  return null
+}
 
 interface FieldSpec {
   field: string
@@ -102,6 +113,21 @@ const FIELDS: Record<ImportKind, FieldSpec[]> = {
     { field: 'parent_sku', required: true, synonyms: ['parent', 'parentsku', 'assembly', 'assemblysku', 'finished', 'finishedgood', 'product', 'makes', 'output'], content: looksLikeCode },
     { field: 'component_sku', required: true, synonyms: ['component', 'componentsku', 'material', 'rawmaterial', 'ingredient', 'input', 'part', 'partno'], content: looksLikeCode },
     { field: 'qty_per', required: true, synonyms: ['qtyper', 'quantityper', 'qty', 'quantity', 'usage', 'perunit', 'amount', 'qtyperunit'], content: mostlyNumeric },
+  ],
+  // Migration kit: QB/spreadsheet exports of what's outstanding on switch day.
+  // Auto-detect needs an explicit customer/vendor header; generic files work
+  // via the manual kind + mapping override.
+  open_invoices: [
+    { field: 'customer', required: true, synonyms: ['customer', 'client', 'billto', 'customername', 'account'] },
+    { field: 'amount', required: true, synonyms: ['amount', 'balance', 'open', 'openbalance', 'amountdue', 'due', 'total', 'outstanding'], content: mostlyNumeric },
+    { field: 'number', required: false, synonyms: ['invoice', 'invoiceno', 'invoicenumber', 'number', 'ref', 'no', 'num'] },
+    { field: 'date', required: false, synonyms: ['date', 'invoicedate', 'issued', 'issuedate', 'txndate'] },
+  ],
+  open_bills: [
+    { field: 'vendor', required: true, synonyms: ['vendor', 'supplier', 'payee', 'vendorname'] },
+    { field: 'amount', required: true, synonyms: ['amount', 'balance', 'open', 'openbalance', 'amountdue', 'due', 'total', 'outstanding'], content: mostlyNumeric },
+    { field: 'number', required: false, synonyms: ['bill', 'billno', 'billnumber', 'invoice', 'invoiceno', 'number', 'ref', 'no', 'num'] },
+    { field: 'date', required: false, synonyms: ['date', 'billdate', 'duedate', 'txndate'] },
   ],
 }
 
@@ -159,7 +185,7 @@ export function suggestMapping(
 
 export function detectKind(headers: string[], sampleRows: string[][]): { kind: ImportKind; scores: Record<ImportKind, number> } {
   const scores = {} as Record<ImportKind, number>
-  for (const kind of ['items', 'parties', 'bom'] as ImportKind[]) {
+  for (const kind of ['items', 'parties', 'bom', 'open_invoices', 'open_bills'] as ImportKind[]) {
     const mapping = suggestMapping(kind, headers, sampleRows)
     const specs = FIELDS[kind]
     const required = specs.filter((s) => s.required)
@@ -172,9 +198,9 @@ export function detectKind(headers: string[], sampleRows: string[][]): { kind: I
       : 0
     scores[kind] = round2(requiredScore * 0.8 + optionalScore * 0.2)
   }
-  // BOM needs both sku columns strongly; parties is the weakest-structured, so
-  // prefer richer interpretations on ties.
-  const order: ImportKind[] = ['bom', 'items', 'parties']
+  // Prefer the most specific interpretations on ties; parties is the
+  // weakest-structured and goes last.
+  const order: ImportKind[] = ['bom', 'open_invoices', 'open_bills', 'items', 'parties']
   const kind = order.reduce((best, k) => (scores[k] > scores[best] + 0.001 ? k : best), 'items' as ImportKind)
   return { kind, scores }
 }
@@ -260,6 +286,16 @@ export async function analyze(
       r.name.toLowerCase(),
     ),
   )
+  const existingInvoiceNos = new Set(
+    (await db.query<{ number: string }>('select number from invoices where tenant_id = $1', [tenantId])).rows.map(
+      (r) => r.number.toLowerCase(),
+    ),
+  )
+  const existingBillNos = new Set(
+    (await db.query<{ number: string }>('select number from bills where tenant_id = $1', [tenantId])).rows.map((r) =>
+      r.number.toLowerCase(),
+    ),
+  )
 
   const get = (row: string[], field: string): string => {
     const col = mapping[field]?.column
@@ -328,6 +364,44 @@ export async function analyze(
       if (get(row, 'roles') && roles.length === 0)
         issues.push({ row: rowNo, severity: 'warning', message: `unrecognized role "${get(row, 'roles')}" — defaulting to vendor` })
       rows.push({ _row: rowNo, _skip: exists, name, roles: roles.length ? [...new Set(roles)] : ['vendor'] })
+    } else if (kind === 'open_invoices' || kind === 'open_bills') {
+      const isAR = kind === 'open_invoices'
+      const party = get(row, isAR ? 'customer' : 'vendor')
+      const amount = numeric(get(row, 'amount'))
+      const number = get(row, 'number') || null
+      const rawDate = get(row, 'date')
+      const date = rawDate ? parseDate(rawDate) : null
+      if (!party) {
+        issues.push({ row: rowNo, severity: 'skip', message: `missing ${isAR ? 'customer' : 'vendor'}` })
+        return
+      }
+      if (amount === null || amount <= 0) {
+        issues.push({ row: rowNo, severity: 'skip', message: `unreadable or non-positive amount "${get(row, 'amount')}"` })
+        return
+      }
+      if (number) {
+        const key = number.toLowerCase()
+        if (seen.has(key)) {
+          issues.push({ row: rowNo, severity: 'skip', message: `duplicate number "${number}" in file` })
+          return
+        }
+        seen.add(key)
+        const exists = isAR ? existingInvoiceNos.has(key) : existingBillNos.has(key)
+        if (exists) {
+          issues.push({ row: rowNo, severity: 'skip', message: `"${number}" already exists — will skip` })
+          rows.push({ _row: rowNo, _skip: true, [isAR ? 'customer' : 'vendor']: party, number, amount: round2(amount), date })
+          return
+        }
+      }
+      if (!existingParties.has(party.toLowerCase()))
+        issues.push({ row: rowNo, severity: 'warning', message: `new ${isAR ? 'customer' : 'vendor'} "${party}" will be created` })
+      if (rawDate && !date)
+        issues.push({ row: rowNo, severity: 'warning', message: `unreadable date "${rawDate}" — using today` })
+      rows.push({
+        _row: rowNo, _skip: false,
+        [isAR ? 'customer' : 'vendor']: party,
+        number, amount: round2(amount), date,
+      })
     } else {
       const parent = get(row, 'parent_sku')
       const component = get(row, 'component_sku')
@@ -376,8 +450,31 @@ export interface CommitResult {
   skipped: number
   opening_stock_value: number
   opening_stock_events: number
+  opening_ar_total: number
+  opening_ap_total: number
   bom_parents: number
   issues: ImportIssue[]
+}
+
+// Find-or-create a party with the given role (case-insensitive on name).
+async function ensureParty(tx: Transaction, tenantId: string, name: string, role: string): Promise<string> {
+  const existing = await tx.query<{ id: string; roles: string[] }>(
+    'select id, roles from parties where tenant_id = $1 and lower(name) = lower($2)',
+    [tenantId, name],
+  )
+  if (existing.rows[0]) {
+    if (!existing.rows[0].roles.includes(role)) {
+      await tx.query('update parties set roles = array_append(roles, $3) where tenant_id = $1 and id = $2', [
+        tenantId, existing.rows[0].id, role,
+      ])
+    }
+    return existing.rows[0].id
+  }
+  const created = await tx.query<{ id: string }>(
+    'insert into parties (tenant_id, name, roles) values ($1, $2, array[$3]) returning id',
+    [tenantId, name, role],
+  )
+  return created.rows[0].id
 }
 
 export async function commit(
@@ -396,9 +493,55 @@ export async function commit(
     let skipped = 0
     let openingValue = 0
     let openingEvents = 0
+    let openingAR = 0
+    let openingAP = 0
     let bomParents = 0
 
-    if (a.kind === 'items') {
+    if (a.kind === 'open_invoices') {
+      for (const r of a.rows) {
+        if (r._skip) {
+          skipped++
+          continue
+        }
+        const customerId = await ensureParty(tx, tenantId, r.customer as string, 'customer')
+        const number = (r.number as string | null) ?? (await nextNumber(tx, tenantId, 'INV'))
+        const date = (r.date as string | null) ?? null
+        await ingestTx(tx, tenantId, {
+          type: 'OpeningReceivableSet',
+          payload: { amount: num(r.amount), customer: r.customer as string, ref: number },
+          occurred_at: date ? `${date}T12:00:00.000Z` : undefined,
+        })
+        await tx.query(
+          `insert into invoices (tenant_id, number, customer_id, amount, issued_date)
+           values ($1, $2, $3, $4, coalesce($5::date, current_date))`,
+          [tenantId, number, customerId, num(r.amount), date],
+        )
+        openingAR = round2(openingAR + num(r.amount))
+        created++
+      }
+    } else if (a.kind === 'open_bills') {
+      for (const r of a.rows) {
+        if (r._skip) {
+          skipped++
+          continue
+        }
+        const vendorId = await ensureParty(tx, tenantId, r.vendor as string, 'vendor')
+        const number = (r.number as string | null) ?? (await nextNumber(tx, tenantId, 'BILL'))
+        const date = (r.date as string | null) ?? null
+        await ingestTx(tx, tenantId, {
+          type: 'OpeningPayableSet',
+          payload: { amount: num(r.amount), vendor: r.vendor as string, ref: number },
+          occurred_at: date ? `${date}T12:00:00.000Z` : undefined,
+        })
+        await tx.query(
+          `insert into bills (tenant_id, number, vendor_id, kind, amount, bill_date)
+           values ($1, $2, $3, 'opening', $4, coalesce($5::date, current_date))`,
+          [tenantId, number, vendorId, num(r.amount), date],
+        )
+        openingAP = round2(openingAP + num(r.amount))
+        created++
+      }
+    } else if (a.kind === 'items') {
       for (const r of a.rows) {
         if (r._skip) {
           skipped++
@@ -466,6 +609,8 @@ export async function commit(
       skipped,
       opening_stock_value: openingValue,
       opening_stock_events: openingEvents,
+      opening_ar_total: openingAR,
+      opening_ap_total: openingAP,
       bom_parents: bomParents,
       issues: a.issues,
     }

@@ -196,7 +196,7 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
   }))
 
   // --- onboarding importers ------------------------------------------------
-  const importKind = z.enum(['items', 'parties', 'bom'])
+  const importKind = z.enum(['items', 'parties', 'bom', 'open_invoices', 'open_bills'])
   const mappingOverride = z.record(z.string(), z.number().int().nonnegative().nullable()).optional()
   app.post('/api/import/analyze', wrap(async (c) => {
     const body = z

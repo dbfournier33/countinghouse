@@ -18,6 +18,18 @@
       <button class="small" data-sample="items">Item list</button>
       <button class="small" data-sample="parties">Vendors & customers</button>
       <button class="small" data-sample="bom">Recipes / BOM</button>
+      <button class="small" data-sample="open_invoices">Open invoices (AR)</button>
+      <button class="small" data-sample="open_bills">Open bills (AP)</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Opening cash — the last migration step</h2>
+    <div class="formrow">
+      <input class="money" id="cash-amount" type="number" min="0" step="any" placeholder="bank balance $" />
+      <input id="cash-date" type="date" />
+      <button class="primary" id="cash-post">Post opening cash</button>
+      <span class="muted" style="font-size:13px">Posts DR Cash / CR Opening Balances. Items + stock, open AR/AP, cash — and the switch-day balance sheet stands complete.</span>
     </div>
   </section>
 
@@ -30,6 +42,8 @@
           <option value="items">Items + opening stock</option>
           <option value="parties">Vendors & customers</option>
           <option value="bom">Bill of materials</option>
+          <option value="open_invoices">Open invoices (AR)</option>
+          <option value="open_bills">Open bills (AP)</option>
         </select>
         <span id="r-detect" class="muted" style="font-size:13px"></span>
         <label style="font-size:13px; margin-left:auto"><input type="checkbox" id="r-stock" checked /> post opening stock</label>
@@ -88,12 +102,22 @@ BAR-CHOC,OATS-ROLL,0.045
 BAR-CHOC,HNY-WF,0.014
 BAR-CHOC,WRAP-PRT,1
 BAR-XX,OATS-ROLL,0.05`,
+  open_invoices: `Customer,Invoice #,Invoice Date,Open Balance
+Ridgeline Market,QB-10412,7/2/2026,"$1,240.00"
+Bay Organics Co-op,QB-10428,7/11/2026,862.50
+Summit Outfitters,QB-10433,7/19/2026,$418.20
+High Desert Provisions,QB-10440,7/24/2026,"2,150.00"`,
+  open_bills: `Vendor,Bill No,Bill Date,Amount Due
+Cascade Farm Supply,CF-2291,7/8/2026,"$3,420.00"
+Blue Heron Packaging,BH-118,7/15/2026,975.40
+Pacific Freight Co,PF-5502,7/21/2026,684.00`,
 }
 
 const FIELD_LABELS = {
   sku: 'SKU', name: 'Name', kind: 'Type', uom: 'Unit', qty_on_hand: 'Qty on hand',
   unit_cost: 'Unit cost', reorder_point: 'Reorder point', roles: 'Role(s)',
   parent_sku: 'Parent SKU', component_sku: 'Component SKU', qty_per: 'Qty per unit',
+  customer: 'Customer', vendor: 'Vendor', number: 'Number', amount: 'Amount', date: 'Date',
 }
 
 let current = null // last analyze result
@@ -179,6 +203,18 @@ function renderResult() {
 }
 
 document.getElementById('analyze').addEventListener('click', () => runAnalyze())
+document.getElementById('cash-post').addEventListener('click', async () => {
+  const amount = Number(document.getElementById('cash-amount').value)
+  if (!amount || amount <= 0) return toast('enter the bank balance', true)
+  const date = document.getElementById('cash-date').value
+  try {
+    const body = { type: 'OpeningCashSet', payload: { amount } }
+    if (date) body.occurred_at = `${date}T12:00:00.000Z`
+    await api('/api/events', { method: 'POST', body: JSON.stringify(body) })
+    toast(`Opening cash ${usd(amount)} posted`)
+    document.getElementById('cash-amount').value = ''
+  } catch (e) { toast(e.message, true) }
+})
 document.getElementById('r-kind').addEventListener('change', (e) => runAnalyze(e.target.value))
 document.querySelectorAll('button[data-sample]').forEach((b) =>
   b.addEventListener('click', () => {
@@ -208,6 +244,10 @@ document.getElementById('commit').addEventListener('click', async () => {
         bits.push(`opening stock posted: <b>${usd(r.opening_stock_value)}</b> across ${r.opening_stock_events} event(s) → debit Inventory, credit Opening Balances — check the <a href="/financials.html">balance sheet</a>`)
     } else if (r.kind === 'parties') {
       bits.push(`<b>${r.created}</b> part(ies) created, <b>${r.skipped}</b> skipped`)
+    } else if (r.kind === 'open_invoices') {
+      bits.push(`<b>${r.created}</b> open invoice(s) created, <b>${r.skipped}</b> skipped — <b>${usd(r.opening_ar_total)}</b> of receivables now collectable on the <a href="/finance.html">Finance page</a>`)
+    } else if (r.kind === 'open_bills') {
+      bits.push(`<b>${r.created}</b> open bill(s) created, <b>${r.skipped}</b> skipped — <b>${usd(r.opening_ap_total)}</b> of payables now payable on the <a href="/finance.html">Finance page</a>`)
     } else {
       bits.push(`<b>${r.bom_parents}</b> bill(s) of materials set (${r.created} lines) — ready for <a href="/production.html">work orders</a>`)
     }

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
 import { openDb, provisionTenant } from '../src/bootstrap.js'
+import { listBills, listInvoices, payBill, recordInvoicePayment } from '../src/finance.js'
 import { analyze, commit, detectKind, parseCsv, suggestMapping } from '../src/importer.js'
 import { num } from '../src/money.js'
 
@@ -146,6 +147,63 @@ describe('parties import', () => {
     expect(byName['Blue Heron Packaging, Inc.']).toEqual(['vendor'])
     expect(byName['Ridgeline Market']).toEqual(['customer'])
     expect(byName['Bay Organics Co-op']).toEqual(['customer']) // "Wholesale customer"
+  })
+})
+
+const OPEN_AR = `Customer,Invoice #,Invoice Date,Open Balance
+Ridgeline Market,QB-10412,7/2/2026,"$1,240.00"
+Bay Organics Co-op,QB-10428,7/11/2026,862.50
+Summit Outfitters,QB-10433,7/19/2026,$418.20`
+
+const OPEN_AP = `Vendor,Bill No,Bill Date,Amount Due
+Cascade Farm Supply,CF-2291,7/8/2026,"$3,420.00"
+Blue Heron Packaging,BH-118,7/15/2026,975.40`
+
+describe('migration kit: open AR/AP', () => {
+  it('detects QB-style AR exports, creates parties + open invoices, posts against 3900', async () => {
+    const t = await makeTenant()
+    const a = await analyze(db, t, OPEN_AR)
+    expect(a.kind).toBe('open_invoices')
+    expect(a.ready).toBe(3)
+    expect(a.issues.filter((i) => i.message.includes('will be created'))).toHaveLength(3)
+
+    const r = await commit(db, t, OPEN_AR, 'open_invoices')
+    expect(r.created).toBe(3)
+    expect(r.opening_ar_total).toBe(2520.7) // 1240 + 862.50 + 418.20
+    expect(await balance(t, '1200')).toBe(2520.7)
+    expect(await balance(t, '3900')).toBe(2520.7)
+
+    const invoices = await listInvoices(db, t)
+    expect(invoices).toHaveLength(3)
+    expect(invoices.every((i) => i.status === 'open')).toBe(true)
+    const qb = invoices.find((i) => i.number === 'QB-10412')!
+    expect(qb.issued_date).toBe('2026-07-02') // US date parsed; JE dated same day
+
+    // The migrated invoice is a first-class document: collect it.
+    await recordInvoicePayment(db, t, qb.id)
+    expect(await balance(t, '1200')).toBe(1280.7)
+    expect(await balance(t, '1110')).toBe(1240)
+  })
+
+  it('creates open bills payable through the normal AP flow, and re-runs skip', async () => {
+    const t = await makeTenant()
+    const a = await analyze(db, t, OPEN_AP)
+    expect(a.kind).toBe('open_bills')
+    const r = await commit(db, t, OPEN_AP, 'open_bills')
+    expect(r.created).toBe(2)
+    expect(r.opening_ap_total).toBe(4395.4)
+    expect(await balance(t, '2100')).toBe(4395.4)
+    expect(await balance(t, '3900')).toBe(-4395.4) // payables reduce opening equity
+
+    const bills = await listBills(db, t)
+    expect(bills.every((b) => b.kind === 'opening' && b.status === 'open')).toBe(true)
+    await payBill(db, t, bills.find((b) => b.number === 'BH-118')!.id)
+    expect(await balance(t, '2100')).toBe(3420)
+
+    const again = await commit(db, t, OPEN_AP, 'open_bills')
+    expect(again.created).toBe(0)
+    expect(again.skipped).toBe(2)
+    expect(await balance(t, '2100')).toBe(3420) // unchanged
   })
 })
 

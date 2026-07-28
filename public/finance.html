@@ -94,7 +94,7 @@ async function render() {
       <tr>
         <td class="code">${b.number}</td>
         <td>${b.vendor}</td>
-        <td class="code">${b.po_number ?? 'expense'}</td>
+        <td class="code">${b.po_number ?? b.kind}</td>
         <td style="font-size:13px">${b.bill_date}</td>
         <td class="num">${usd(b.amount)}</td>
         <td>${statusBadge(b.status)}</td>
