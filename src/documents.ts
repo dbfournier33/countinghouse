@@ -106,7 +106,7 @@ export async function receivePurchaseOrder(
   db: PGlite,
   tenantId: string,
   poId: string,
-  lines?: Array<{ line_id: string; qty: number }>,
+  lines?: Array<{ line_id: string; qty: number; lot_no?: string }>,
 ) {
   return db.transaction(async (tx) => {
     const po = await getPO(tx, tenantId, poId)
@@ -126,7 +126,10 @@ export async function receivePurchaseOrder(
     const toReceive =
       lines ??
       poLines.rows
-        .map((l) => ({ line_id: l.id, qty: round4(num(l.qty) - num(l.received_qty)) }))
+        .map((l): { line_id: string; qty: number; lot_no?: string } => ({
+          line_id: l.id,
+          qty: round4(num(l.qty) - num(l.received_qty)),
+        }))
         .filter((l) => l.qty > 0)
     if (toReceive.length === 0) throw new KernelError('nothing left to receive on this order')
 
@@ -140,7 +143,10 @@ export async function receivePurchaseOrder(
       events.push(
         await ingestTx(tx, tenantId, {
           type: 'GoodsReceived',
-          payload: { sku: line.sku, qty: r.qty, unit_cost: num(line.unit_cost), ref: po.number },
+          payload: {
+            sku: line.sku, qty: r.qty, unit_cost: num(line.unit_cost), ref: po.number,
+            ...(r.lot_no ? { lot_no: r.lot_no } : {}),
+          },
         }),
       )
       await tx.query('update po_lines set received_qty = received_qty + $3 where tenant_id = $1 and id = $2', [

@@ -1,7 +1,7 @@
 import type { PGlite, Transaction } from '@electric-sql/pglite'
 import { z } from 'zod'
 import { inventoryAccountFor } from './coa.js'
-import { fmtUSD, num, round2, round6 } from './money.js'
+import { fmtUSD, num, round2, round4, round6 } from './money.js'
 import type { RuleLine } from './rules.js'
 
 // ---------------------------------------------------------------------------
@@ -14,11 +14,13 @@ export const EventSchemas = {
     qty: z.number().positive(),
     unit_cost: z.number().nonnegative(),
     ref: z.string().optional(),
+    lot_no: z.string().optional(),
   }),
   OpeningStockSet: z.object({
     sku: z.string().min(1),
     qty: z.number().positive(),
     unit_cost: z.number().nonnegative(),
+    lot_no: z.string().optional(),
   }),
   BillPosted: z.object({
     amount: z.number().positive(),
@@ -100,7 +102,14 @@ export class KernelError extends Error {
 
 export interface IngestResult {
   event: { id: string; seq: number; type: EventType; occurred_at: string; payload: Record<string, unknown> }
-  moves: Array<{ sku: string; direction: 'in' | 'out'; qty: number; unit_cost: number; value: number }>
+  moves: Array<{
+    sku: string
+    direction: 'in' | 'out'
+    qty: number
+    unit_cost: number
+    value: number
+    lots: Array<{ lot_no: string; qty: number }>
+  }>
   journal: null | {
     id: string
     memo: string
@@ -166,13 +175,73 @@ async function recordMove(
   qty: number,
   unitCost: number,
   value: number,
-): Promise<IngestResult['moves'][number]> {
-  await tx.query(
+): Promise<IngestResult['moves'][number] & { move_id: string }> {
+  const r = await tx.query<{ id: string }>(
     `insert into inventory_moves (tenant_id, event_id, item_id, direction, qty, unit_cost, value)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
+     values ($1, $2, $3, $4, $5, $6, $7) returning id`,
     [tenantId, eventId, item.id, direction, qty, unitCost, value],
   )
-  return { sku: item.sku, direction, qty, unit_cost: unitCost, value }
+  return { sku: item.sku, direction, qty, unit_cost: unitCost, value, lots: [], move_id: r.rows[0].id }
+}
+
+// --- lot identity (never costing) ------------------------------------------
+
+async function lotIn(
+  tx: Transaction,
+  tenantId: string,
+  itemId: string,
+  move: IngestResult['moves'][number] & { move_id: string },
+  lotNo: string,
+): Promise<void> {
+  const existing = await tx.query<{ id: string }>(
+    'select id from lots where tenant_id = $1 and item_id = $2 and lot_no = $3',
+    [tenantId, itemId, lotNo],
+  )
+  const lotId = existing.rows[0]
+    ? existing.rows[0].id
+    : (
+        await tx.query<{ id: string }>(
+          'insert into lots (tenant_id, item_id, lot_no) values ($1, $2, $3) returning id',
+          [tenantId, itemId, lotNo],
+        )
+      ).rows[0].id
+  await tx.query('insert into move_lots (tenant_id, move_id, lot_id, qty) values ($1, $2, $3, $4)', [
+    tenantId, move.move_id, lotId, move.qty,
+  ])
+  move.lots.push({ lot_no: lotNo, qty: move.qty })
+}
+
+// FIFO consumption by lot creation order. Stock predating lot tracking simply
+// stays unallocated — identity is best-effort history, costing is untouched.
+async function lotsOut(
+  tx: Transaction,
+  tenantId: string,
+  itemId: string,
+  move: IngestResult['moves'][number] & { move_id: string },
+): Promise<void> {
+  const available = await tx.query<{ id: string; lot_no: string; on_hand: string }>(
+    `select l.id, l.lot_no,
+            coalesce(sum(case when im.direction = 'in' then ml.qty else -ml.qty end), 0) as on_hand
+     from lots l
+     join move_lots ml on ml.lot_id = l.id and ml.tenant_id = l.tenant_id
+     join inventory_moves im on im.id = ml.move_id
+     where l.tenant_id = $1 and l.item_id = $2
+     group by l.id, l.lot_no, l.created_at
+     having coalesce(sum(case when im.direction = 'in' then ml.qty else -ml.qty end), 0) > 0
+     order by l.created_at`,
+    [tenantId, itemId],
+  )
+  let remaining = move.qty
+  for (const lot of available.rows) {
+    if (remaining <= 0) break
+    const take = round4(Math.min(remaining, num(lot.on_hand)))
+    if (take <= 0) continue
+    await tx.query('insert into move_lots (tenant_id, move_id, lot_id, qty) values ($1, $2, $3, $4)', [
+      tenantId, move.move_id, lot.id, take,
+    ])
+    move.lots.push({ lot_no: lot.lot_no, qty: take })
+    remaining = round4(remaining - take)
+  }
 }
 
 async function addToWip(tx: Transaction, tenantId: string, workOrder: string, value: number) {
@@ -223,28 +292,36 @@ export async function ingestTx(
 
     switch (input.type) {
       case 'GoodsReceived': {
-        const { sku, qty, unit_cost, ref } = p as { sku: string; qty: number; unit_cost: number; ref?: string }
+        const { sku, qty, unit_cost, ref, lot_no } = p as {
+          sku: string; qty: number; unit_cost: number; ref?: string; lot_no?: string
+        }
         const item = await getItem(tx, tenantId, sku)
         const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
         const value = round2(qty * unit_cost)
         const newQty = q0 + qty
         const newAvg = round6((q0 * a0 + qty * unit_cost) / newQty)
         await setCost(tx, tenantId, item.id, newQty, newAvg)
-        moves.push(await recordMove(tx, tenantId, eventId, item, 'in', qty, unit_cost, value))
+        const mv = await recordMove(tx, tenantId, eventId, item, 'in', qty, unit_cost, value)
+        await lotIn(tx, tenantId, item.id, mv, lot_no ?? `RCV-${ev.rows[0].seq}`)
+        moves.push(mv)
         ctx.moveValue = value
         ctx.item = item
         memo = `Received ${qty} ${item.uom} ${item.name} @ ${fmtUSD(unit_cost)}${ref ? ` (${ref})` : ''}`
         break
       }
       case 'OpeningStockSet': {
-        const { sku, qty, unit_cost } = p as { sku: string; qty: number; unit_cost: number }
+        const { sku, qty, unit_cost, lot_no } = p as {
+          sku: string; qty: number; unit_cost: number; lot_no?: string
+        }
         const item = await getItem(tx, tenantId, sku)
         const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
         const value = round2(qty * unit_cost)
         const newQty = q0 + qty
         const newAvg = round6((q0 * a0 + qty * unit_cost) / newQty)
         await setCost(tx, tenantId, item.id, newQty, newAvg)
-        moves.push(await recordMove(tx, tenantId, eventId, item, 'in', qty, unit_cost, value))
+        const mv = await recordMove(tx, tenantId, eventId, item, 'in', qty, unit_cost, value)
+        await lotIn(tx, tenantId, item.id, mv, lot_no ?? `OPEN-${ev.rows[0].seq}`)
+        moves.push(mv)
         ctx.moveValue = value
         ctx.item = item
         memo = `Opening stock: ${qty} ${item.uom} ${item.name} @ ${fmtUSD(unit_cost)}`
@@ -257,7 +334,9 @@ export async function ingestTx(
         if (qty > q0) throw new KernelError(`insufficient stock of ${sku}: on hand ${q0}, requested ${qty}`)
         const value = round2(qty * a0)
         await setCost(tx, tenantId, item.id, q0 - qty, a0)
-        moves.push(await recordMove(tx, tenantId, eventId, item, 'out', qty, a0, value))
+        const mv = await recordMove(tx, tenantId, eventId, item, 'out', qty, a0, value)
+        await lotsOut(tx, tenantId, item.id, mv)
+        moves.push(mv)
         await addToWip(tx, tenantId, work_order, value)
         ctx.moveValue = value
         ctx.item = item
@@ -296,7 +375,10 @@ export async function ingestTx(
         const newQty = q0 + qty
         const newAvg = round6((q0 * a0 + cost) / newQty)
         await setCost(tx, tenantId, item.id, newQty, newAvg)
-        moves.push(await recordMove(tx, tenantId, eventId, item, 'in', qty, unit, cost))
+        const mv = await recordMove(tx, tenantId, eventId, item, 'in', qty, unit, cost)
+        // The batch IS the work order: its number becomes the output lot.
+        await lotIn(tx, tenantId, item.id, mv, work_order)
+        moves.push(mv)
         ctx.wipDrain = cost
         ctx.item = item
         memo = `Completed ${qty} ${item.uom} ${item.name} on ${work_order} (unit cost ${fmtUSD(unit)})`
@@ -309,7 +391,9 @@ export async function ingestTx(
         if (qty > q0) throw new KernelError(`insufficient stock of ${sku}: on hand ${q0}, requested ${qty}`)
         const value = round2(qty * a0)
         await setCost(tx, tenantId, item.id, q0 - qty, a0)
-        moves.push(await recordMove(tx, tenantId, eventId, item, 'out', qty, a0, value))
+        const mv = await recordMove(tx, tenantId, eventId, item, 'out', qty, a0, value)
+        await lotsOut(tx, tenantId, item.id, mv)
+        moves.push(mv)
         ctx.moveValue = value
         ctx.item = item
         memo = `Shipped ${qty} ${item.uom} ${item.name}${ref ? ` (${ref})` : ''}`
@@ -324,9 +408,10 @@ export async function ingestTx(
           throw new KernelError(`insufficient stock of ${sku}: on hand ${q0}, adjusting by ${qty_delta}`)
         const value = round2(absQty * a0)
         await setCost(tx, tenantId, item.id, q0 + qty_delta, a0)
-        moves.push(
-          await recordMove(tx, tenantId, eventId, item, qty_delta > 0 ? 'in' : 'out', absQty, a0, value),
-        )
+        const mv = await recordMove(tx, tenantId, eventId, item, qty_delta > 0 ? 'in' : 'out', absQty, a0, value)
+        if (qty_delta > 0) await lotIn(tx, tenantId, item.id, mv, `ADJ-${ev.rows[0].seq}`)
+        else await lotsOut(tx, tenantId, item.id, mv)
+        moves.push(mv)
         ctx.moveValue = value
         ctx.item = item
         ctx.flipSides = qty_delta < 0

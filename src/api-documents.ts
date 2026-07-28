@@ -17,6 +17,7 @@ import { createEmployee, listEmployees, listTimeEntries, recordTime } from './pe
 import { analyze, commit, type ImportKind } from './importer.js'
 import { createChannelSettlement, listChannelSettlements, recordChannelShipments } from './channels.js'
 import { autoMatch, importBankCsv, manualMatch, reconciliation, setTxnStatus } from './bank.js'
+import { lotsOnHand, trace } from './lots.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -36,7 +37,9 @@ const wrap = (fn: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Resp
   }
 }
 
-const partialLines = z.array(z.object({ line_id: z.string(), qty: z.number().positive() })).optional()
+const partialLines = z
+  .array(z.object({ line_id: z.string(), qty: z.number().positive(), lot_no: z.string().optional() }))
+  .optional()
 
 export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
   // --- purchase orders -----------------------------------------------------
@@ -180,6 +183,14 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
       })
       .parse(await c.req.json())
     return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
+  }))
+
+  // --- lot traceability ----------------------------------------------------
+  app.get('/api/lots', async (c) => c.json(await lotsOnHand(db, c.var.tenantId)))
+  app.get('/api/trace', wrap(async (c) => {
+    const lot = (c.req.query('lot') ?? '').trim()
+    if (!lot) return c.json({ error: 'lot query parameter required' }, 400)
+    return c.json(await trace(db, c.var.tenantId, lot))
   }))
 
   // --- bank reconciliation -------------------------------------------------

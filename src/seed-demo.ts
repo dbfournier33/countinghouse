@@ -91,16 +91,30 @@ const po1 = await createPurchaseOrder(db, tenantId, {
   ],
 })
 await issuePurchaseOrder(db, tenantId, po1.id)
-await receivePurchaseOrder(db, tenantId, po1.id)
-log(`${po1.number}: issued + received (oats, honey)`)
+const po1Lines = await db.query<{ id: string; sku: string }>(
+  'select pl.id, i.sku from po_lines pl join items i on i.id = pl.item_id where pl.po_id = $1',
+  [po1.id],
+)
+await receivePurchaseOrder(
+  db, tenantId, po1.id,
+  po1Lines.rows.map((l) => ({
+    line_id: l.id,
+    qty: l.sku === 'OATS' ? 500 : 200,
+    lot_no: l.sku === 'OATS' ? 'OAT-2207' : 'HNY-2207',
+  })),
+)
+log(`${po1.number}: issued + received (oats lot OAT-2207, honey lot HNY-2207)`)
 
 const po2 = await createPurchaseOrder(db, tenantId, {
   vendor: 'Cascade Farm Supply',
   lines: [{ sku: 'WRAP', qty: 10000, unit_cost: 0.06 }],
 })
 await issuePurchaseOrder(db, tenantId, po2.id)
-await receivePurchaseOrder(db, tenantId, po2.id)
-log(`${po2.number}: issued + received (wrappers)`)
+const po2Lines = await db.query<{ id: string }>('select id from po_lines where po_id = $1', [po2.id])
+await receivePurchaseOrder(db, tenantId, po2.id, [
+  { line_id: po2Lines.rows[0].id, qty: 10000, lot_no: 'WRP-2207' },
+])
+log(`${po2.number}: issued + received (wrapper lot WRP-2207)`)
 
 // Phase 2: bills are documents now. PO-1001 gets billed and paid; the wrapper
 // PO stays received-not-billed so the close checklist has something to say.

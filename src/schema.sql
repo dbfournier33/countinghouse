@@ -105,6 +105,29 @@ create table if not exists inventory_moves (
   created_at    timestamptz not null default now()
 );
 
+-- Lot identity (decision: traceability is identity, never costing). Receipts
+-- create lots; issues/shipments consume FIFO; a work order's output lot IS its
+-- number — the batch. move_lots allocates every tracked move to its lots.
+create table if not exists lots (
+  id         uuid primary key default gen_random_uuid(),
+  tenant_id  uuid not null references tenants(id),
+  item_id    uuid not null references items(id),
+  lot_no     text not null,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, item_id, lot_no)
+);
+
+create table if not exists move_lots (
+  id      uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id),
+  move_id uuid not null references inventory_moves(id),
+  lot_id  uuid not null references lots(id),
+  qty     numeric(18,4) not null check (qty > 0)
+);
+
+create index if not exists idx_move_lots_lot on move_lots (tenant_id, lot_id);
+create index if not exists idx_move_lots_move on move_lots (tenant_id, move_id);
+
 -- Moving-average cost projection, per item per location.
 create table if not exists item_costs (
   tenant_id     uuid not null references tenants(id),

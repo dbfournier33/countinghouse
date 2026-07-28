@@ -31,6 +31,7 @@ const PAGES = [
   ['sales', '/sales.html', 'Sales'],
   ['channels', '/channels.html', 'Channels'],
   ['production', '/production.html', 'Production'],
+  ['trace', '/trace.html', 'Trace'],
   ['capacity', '/capacity.html', 'Capacity'],
   ['people', '/people.html', 'People'],
   ['finance', '/finance.html', 'Finance'],

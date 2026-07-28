@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Traceability</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Trace a lot — both recall questions in one search</h2>
+    <div class="formrow">
+      <input id="q" placeholder="lot number, e.g. HNY-2207 or WO-1001" style="width:260px" />
+      <button class="primary" id="go">Trace</button>
+      <span class="muted" style="font-size:13px">Where did it go? What went into it? Vendor lot → batch → customer, in one hop each way.</span>
+    </div>
+    <div id="results"></div>
+  </section>
+
+  <section class="card">
+    <h2>Lots on hand</h2>
+    <table id="onhand"></table>
+  </section>
+
+  <footer>Receipts create lots (vendor lot number or auto), consumption is FIFO, and a work order's number IS its batch lot. Identity only — costing stays moving-average, exactly as decided.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, qtyFmt, toast } from '/app.js'
+
+pageShell({
+  active: 'trace',
+  title: 'Traceability',
+  subtitle: 'Recall-readiness for people who make things people swallow.',
+})
+
+async function renderOnHand() {
+  const lots = await api('/api/lots')
+  document.getElementById('onhand').replaceChildren(el(`
+    <thead><tr><th>Lot</th><th>Item</th><th class="num">On hand</th></tr></thead>
+    <tbody>${lots.map((l) => `
+      <tr>
+        <td><a href="#" class="lotlink code" data-lot="${l.lot_no}" style="color:var(--accent); text-decoration:none">${l.lot_no}</a></td>
+        <td>${l.name} <span class="muted" style="font-size:12px">${l.sku}</span></td>
+        <td class="num">${qtyFmt(l.on_hand)} ${l.uom}</td>
+      </tr>`).join('') || '<tr><td colspan="3" class="muted">no tracked lots yet</td></tr>'}
+    </tbody>
+  `))
+  document.querySelectorAll('.lotlink').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault()
+      document.getElementById('q').value = a.dataset.lot
+      runTrace()
+    }),
+  )
+}
+
+async function runTrace() {
+  const lot = document.getElementById('q').value.trim()
+  if (!lot) return toast('enter a lot number', true)
+  try {
+    const results = await api(`/api/trace?lot=${encodeURIComponent(lot)}`)
+    if (!results.length) {
+      document.getElementById('results').innerHTML =
+        `<p class="muted" style="margin-top:12px">no lot found matching "${lot}"</p>`
+      return
+    }
+    document.getElementById('results').replaceChildren(el(results.map((r) => `
+      <div style="margin-top:14px; border-top:1px solid var(--line); padding-top:12px">
+        <div style="display:flex; gap:10px; align-items:baseline; flex-wrap:wrap">
+          <span class="code" style="font-size:15px; font-weight:650">${r.lot_no}</span>
+          <span>${r.item} <span class="muted" style="font-size:12px">${r.sku}</span></span>
+          <span class="muted" style="font-size:13px">on hand: ${qtyFmt(r.on_hand)} ${r.uom}</span>
+          ${r.customers_affected.length
+            ? `<span class="status partially_received">customers affected: ${r.customers_affected.join(', ')}</span>`
+            : '<span class="status received">no customers affected</span>'}
+        </div>
+        ${r.inputs.length ? `
+          <h2 style="margin-top:12px">What went into it</h2>
+          <table><thead><tr><th>Lot</th><th>Material</th><th class="num">Qty</th><th>Source</th></tr></thead>
+          <tbody>${r.inputs.map((i) => `
+            <tr><td class="code"><a href="#" class="lotlink2" data-lot="${i.lot_no}" style="color:var(--accent); text-decoration:none">${i.lot_no}</a></td>
+            <td>${i.name}</td><td class="num">${qtyFmt(i.qty)}</td><td class="code">${i.source}</td></tr>`).join('')}
+          </tbody></table>` : ''}
+        <h2 style="margin-top:12px">Where it went</h2>
+        <table><thead><tr><th>Via</th><th class="num">Qty</th><th>Customer</th><th>Detail</th></tr></thead>
+        <tbody>${r.destinations.map((d) => `
+          <tr><td class="code">${d.via}</td><td class="num">${qtyFmt(d.qty)}</td>
+          <td>${d.customer ?? '<span class="muted">—</span>'}</td>
+          <td class="muted" style="font-size:13px">${d.detail}</td></tr>`).join('') ||
+          '<tr><td colspan="4" class="muted">still fully in stock</td></tr>'}
+        </tbody></table>
+      </div>`).join('')))
+    document.querySelectorAll('.lotlink2').forEach((a) =>
+      a.addEventListener('click', (e) => {
+        e.preventDefault()
+        document.getElementById('q').value = a.dataset.lot
+        runTrace()
+      }),
+    )
+  } catch (e) { toast(e.message, true) }
+}
+
+document.getElementById('go').addEventListener('click', runTrace)
+document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runTrace() })
+
+renderOnHand().catch((e) => toast(e.message, true))
+</script>
+</body>
+</html>
