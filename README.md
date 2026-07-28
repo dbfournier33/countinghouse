@@ -65,6 +65,23 @@ Run `seed` before `dev` (the dev database is single-process PGlite).
 
 Auth: `Authorization: Bearer dev-bigsur` (demo tenant).
 
-Event types: `GoodsReceived`, `BillPosted`, `PaymentMade`, `MaterialIssued`,
-`TimeLogged`, `ProductionCompleted`, `GoodsShipped`, `InvoiceIssued`,
-`PaymentReceived`, `AdjustmentMade`.
+Event types: `GoodsReceived`, `BillPosted`, `ExpenseBillPosted`, `PaymentMade`,
+`MaterialIssued`, `TimeLogged`, `ProductionCompleted`, `GoodsShipped`,
+`InvoiceIssued`, `PaymentReceived`, `AdjustmentMade`, `OpeningStockSet`,
+`OpeningCashSet`, `OpeningReceivableSet`, `OpeningPayableSet`,
+`ChannelSettlement`.
+
+## MCP server — the ERP as tools for an AI operator
+
+```bash
+npm run seed && npm run dev   # the API must be running
+npm run mcp                   # stdio MCP server (SERP_URL / SERP_TOKEN env)
+```
+
+A thin client over the same HTTP API as the UI — same auth, same validation, same
+events. Ten tools: `get_company_snapshot`, `get_planning`,
+`apply_planning_suggestion` (drafts only — a human still issues/releases),
+`get_financials`, `get_close_checklist`, `get_inventory`, `list_open_orders`,
+`get_capacity`, `trace_lot`, `record_time_entry`. The repo's `.mcp.json` registers
+it automatically for Claude Code; ask "what should I make this week?" and the answer
+comes from live planning.

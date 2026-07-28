@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "simple-erp": {
+      "command": "npm",
+      "args": ["run", "-s", "mcp"],
+      "env": {
+        "SERP_URL": "http://localhost:5310",
+        "SERP_TOKEN": "dev-bigsur"
+      }
+    }
+  }
+}
