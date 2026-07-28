@@ -14,6 +14,7 @@ import {
 } from './finance.js'
 import { compareTrialBalance, getMapping, qbSummary, updateMapping } from './qb-bridge.js'
 import { createEmployee, listEmployees, listTimeEntries, recordTime } from './people.js'
+import { analyze, commit, type ImportKind } from './importer.js'
 
 type Env = { Variables: { tenantId: string } }
 type Ctx = Context<Env>
@@ -163,6 +164,32 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
       })
       .parse(await c.req.json())
     return c.json(await compareTrialBalance(db, c.var.tenantId, body.to, body.rows))
+  }))
+
+  // --- onboarding importers ------------------------------------------------
+  const importKind = z.enum(['items', 'parties', 'bom'])
+  const mappingOverride = z.record(z.string(), z.number().int().nonnegative().nullable()).optional()
+  app.post('/api/import/analyze', wrap(async (c) => {
+    const body = z
+      .object({ csv: z.string().min(1), kind: importKind.optional(), mapping: mappingOverride })
+      .parse(await c.req.json())
+    return c.json(await analyze(db, c.var.tenantId, body.csv, body.kind as ImportKind | undefined, body.mapping))
+  }))
+  app.post('/api/import/commit', wrap(async (c) => {
+    const body = z
+      .object({
+        csv: z.string().min(1),
+        kind: importKind,
+        mapping: mappingOverride,
+        post_opening_stock: z.boolean().optional(),
+      })
+      .parse(await c.req.json())
+    return c.json(
+      await commit(db, c.var.tenantId, body.csv, body.kind as ImportKind, body.mapping, {
+        post_opening_stock: body.post_opening_stock,
+      }),
+      201,
+    )
   }))
 
   // --- people & time -------------------------------------------------------

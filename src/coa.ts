@@ -17,6 +17,7 @@ export const COA: CoaAccount[] = [
   { code: '2100', name: 'Accounts payable', kind: 'liability', normal: 'credit', qb: 'Accounts Payable (A/P)' },
   { code: '2110', name: 'Goods received, not invoiced', kind: 'liability', normal: 'credit', qb: 'Accrued Liabilities' },
   { code: '3100', name: "Owner's equity", kind: 'equity', normal: 'credit', qb: "Owner's Equity" },
+  { code: '3900', name: 'Opening balances', kind: 'equity', normal: 'credit', qb: 'Opening Balance Equity' },
   { code: '4100', name: 'Revenue — product sales', kind: 'revenue', normal: 'credit', qb: 'Sales of Product Income' },
   { code: '5110', name: 'Cost of goods sold', kind: 'expense', normal: 'debit', qb: 'Cost of Goods Sold' },
   { code: '5150', name: 'Inventory shrinkage & adjustments', kind: 'expense', normal: 'debit', qb: 'Inventory Shrinkage' },

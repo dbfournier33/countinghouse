@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple ERP — Import</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Paste the spreadsheet you already run the shop on</h2>
+    <textarea id="csv" rows="9" style="width:100%; font-family:var(--mono); font-size:12px"
+      placeholder="Paste CSV here — headers don't need to match anything, we'll figure them out."></textarea>
+    <div class="actions" style="margin-top:8px">
+      <button class="primary" id="analyze">Analyze</button>
+      <span class="muted" style="font-size:13px">or try a messy sample:</span>
+      <button class="small" data-sample="items">Item list</button>
+      <button class="small" data-sample="parties">Vendors & customers</button>
+      <button class="small" data-sample="bom">Recipes / BOM</button>
+    </div>
+  </section>
+
+  <div id="result" style="display:none">
+    <section class="card">
+      <h2>Here's what we think this is — correct us, then import</h2>
+      <div class="formrow">
+        <label class="muted" style="font-size:13px">file type</label>
+        <select id="r-kind">
+          <option value="items">Items + opening stock</option>
+          <option value="parties">Vendors & customers</option>
+          <option value="bom">Bill of materials</option>
+        </select>
+        <span id="r-detect" class="muted" style="font-size:13px"></span>
+        <label style="font-size:13px; margin-left:auto"><input type="checkbox" id="r-stock" checked /> post opening stock</label>
+        <button class="primary" id="commit">Import</button>
+      </div>
+      <table id="r-mapping"></table>
+    </section>
+    <div class="cols">
+      <section class="card">
+        <h2>Preview — as it will land</h2>
+        <div style="overflow-x:auto"><table id="r-preview"></table></div>
+      </section>
+      <section class="card">
+        <h2>Flags</h2>
+        <table id="r-issues"></table>
+      </section>
+    </div>
+  </div>
+
+  <section class="card" id="done" style="display:none">
+    <h2>Imported</h2>
+    <div id="done-body" style="font-size:14px"></div>
+  </section>
+
+  <footer>Analyze never writes. Import runs in one transaction through the same events as everything else — opening stock posts against Opening Balances (3900), and re-runs safely skip whatever already exists.</footer>
+</div>
+<script type="module">
+import { api, el, pageShell, toast, usd } from '/app.js'
+
+pageShell({
+  active: 'import',
+  title: 'Import',
+  subtitle: 'Onboarding without an implementation partner: we map, you confirm, it lands.',
+})
+
+const SAMPLES = {
+  items: `Part #,Description,Type,QOH,Std Cost ($),Unit,Min Stock
+OATS-ROLL,"Rolled oats, 25lb sacks",Raw Material,"1,240",2.38,kg,400
+HNY-WF,Wildflower honey drums,RM,310,$6.42,kg,60
+WRAP-PRT,Printed wrapper film rolls,raw,"22,500",0.058,ea,"5,000"
+BAR-OG,Original granola bar 45g,Finished Good,850,,ea,200
+BAR-CHOC,Chocolate chip bar 45g,FG,0,,ea,150
+BOX-12,12-pack retail carton,packaging,4100,0.31,ea,1000
+OATS-ROLL,duplicate row should be skipped,raw,10,2.40,kg,0`,
+  parties: `Company,Relationship
+Cascade Farm Supply,Supplier
+"Blue Heron Packaging, Inc.",vendor
+Ridgeline Market,Customer
+Summit Outfitters,client
+Bay Organics Co-op,Wholesale customer`,
+  bom: `Assembly,Ingredient,Qty Per Unit
+BAR-OG,OATS-ROLL,0.05
+BAR-OG,HNY-WF,0.0166667
+BAR-OG,WRAP-PRT,1
+BAR-CHOC,OATS-ROLL,0.045
+BAR-CHOC,HNY-WF,0.014
+BAR-CHOC,WRAP-PRT,1
+BAR-XX,OATS-ROLL,0.05`,
+}
+
+const FIELD_LABELS = {
+  sku: 'SKU', name: 'Name', kind: 'Type', uom: 'Unit', qty_on_hand: 'Qty on hand',
+  unit_cost: 'Unit cost', reorder_point: 'Reorder point', roles: 'Role(s)',
+  parent_sku: 'Parent SKU', component_sku: 'Component SKU', qty_per: 'Qty per unit',
+}
+
+let current = null // last analyze result
+let overrides = null
+
+async function runAnalyze(kind, mapping) {
+  const csv = document.getElementById('csv').value
+  if (!csv.trim()) return toast('paste a CSV first', true)
+  try {
+    const body = { csv }
+    if (kind) body.kind = kind
+    if (mapping) body.mapping = mapping
+    current = await api('/api/import/analyze', { method: 'POST', body: JSON.stringify(body) })
+    overrides = mapping ?? null
+    renderResult()
+  } catch (e) { toast(e.message, true) }
+}
+
+function renderResult() {
+  const r = current
+  document.getElementById('result').style.display = ''
+  document.getElementById('done').style.display = 'none'
+  document.getElementById('r-kind').value = r.kind
+  document.getElementById('r-detect').textContent =
+    `detected: ${Object.entries(r.kind_scores).map(([k, s]) => `${k} ${Math.round(s * 100)}%`).join(' · ')}`
+  document.getElementById('r-stock').parentElement.style.display = r.kind === 'items' ? '' : 'none'
+
+  const colOptions = (selected) =>
+    `<option value="">— not present —</option>` +
+    r.headers.map((h, i) => `<option value="${i}" ${i === selected ? 'selected' : ''}>${h || `(column ${i + 1})`}</option>`).join('')
+  const confChip = (m) => {
+    if (m.column === null) return '<span class="pill">unmapped</span>'
+    const pct = Math.round(m.confidence * 100)
+    const cls = m.confidence >= 0.8 ? 'ok' : m.confidence >= 0.5 ? '' : 'err'
+    return `<span class="${cls}" style="font-size:12px">${pct}%</span>`
+  }
+  document.getElementById('r-mapping').replaceChildren(el(`
+    <thead><tr><th>Our field</th><th>Their column</th><th>Confidence</th><th>Why</th></tr></thead>
+    <tbody>${Object.entries(r.mapping).map(([field, m]) => `
+      <tr>
+        <td style="font-weight:600">${FIELD_LABELS[field] ?? field}</td>
+        <td><select class="m-col" data-field="${field}">${colOptions(m.column)}</select></td>
+        <td>${confChip(m)}</td>
+        <td class="muted" style="font-size:12.5px">${m.reason}</td>
+      </tr>`).join('')}
+    </tbody>
+  `))
+  document.querySelectorAll('.m-col').forEach((sel) =>
+    sel.addEventListener('change', () => {
+      const mapping = {}
+      document.querySelectorAll('.m-col').forEach((s) => {
+        mapping[s.dataset.field] = s.value === '' ? null : Number(s.value)
+      })
+      runAnalyze(document.getElementById('r-kind').value, mapping)
+    }),
+  )
+
+  const fields = Object.keys(r.mapping)
+  const previewRows = r.rows.slice(0, 8)
+  document.getElementById('r-preview').replaceChildren(el(`
+    <thead><tr>${fields.map((f) => `<th>${FIELD_LABELS[f] ?? f}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${previewRows.map((row) => `
+      <tr style="${row._skip ? 'opacity:0.45' : ''}">
+        ${fields.map((f) => `<td style="font-size:13px">${Array.isArray(row[f]) ? row[f].join(', ') : (row[f] ?? '')}</td>`).join('')}
+        <td>${row._skip ? '<span class="pill">skip</span>' : ''}</td>
+      </tr>`).join('') || '<tr><td class="muted">nothing importable</td></tr>'}
+      ${r.rows.length > 8 ? `<tr><td colspan="${fields.length + 1}" class="muted" style="font-size:12px">…and ${r.rows.length - 8} more</td></tr>` : ''}
+    </tbody>
+  `))
+
+  document.getElementById('r-issues').replaceChildren(el(`
+    <tbody>${r.issues.map((i) => `
+      <tr>
+        <td style="width:50px" class="code">row ${i.row}</td>
+        <td style="width:70px"><span class="pill" style="${i.severity === 'skip' ? 'background:var(--bad-bg); color:var(--bad)' : 'background:var(--warn-bg); color:var(--warn)'}">${i.severity}</span></td>
+        <td style="font-size:13px">${i.message}</td>
+      </tr>`).join('') || '<tr><td class="ok">✓ nothing to flag — clean file</td></tr>'}
+    </tbody>
+  `))
+
+  document.querySelector('#result h2').textContent =
+    `Here's what we think this is — ${r.ready} of ${r.total} rows ready to import`
+}
+
+document.getElementById('analyze').addEventListener('click', () => runAnalyze())
+document.getElementById('r-kind').addEventListener('change', (e) => runAnalyze(e.target.value))
+document.querySelectorAll('button[data-sample]').forEach((b) =>
+  b.addEventListener('click', () => {
+    document.getElementById('csv').value = SAMPLES[b.dataset.sample]
+    runAnalyze()
+  }),
+)
+
+document.getElementById('commit').addEventListener('click', async () => {
+  const b = document.getElementById('commit')
+  b.disabled = true
+  try {
+    const r = await api('/api/import/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        csv: document.getElementById('csv').value,
+        kind: document.getElementById('r-kind').value,
+        mapping: overrides ?? undefined,
+        post_opening_stock: document.getElementById('r-stock').checked,
+      }),
+    })
+    document.getElementById('done').style.display = ''
+    const bits = []
+    if (r.kind === 'items') {
+      bits.push(`<b>${r.created}</b> item(s) created, <b>${r.skipped}</b> skipped (already existed)`)
+      if (r.opening_stock_events)
+        bits.push(`opening stock posted: <b>${usd(r.opening_stock_value)}</b> across ${r.opening_stock_events} event(s) → debit Inventory, credit Opening Balances — check the <a href="/financials.html">balance sheet</a>`)
+    } else if (r.kind === 'parties') {
+      bits.push(`<b>${r.created}</b> part(ies) created, <b>${r.skipped}</b> skipped`)
+    } else {
+      bits.push(`<b>${r.bom_parents}</b> bill(s) of materials set (${r.created} lines) — ready for <a href="/production.html">work orders</a>`)
+    }
+    document.getElementById('done-body').innerHTML = bits.join('<br />')
+    toast('Imported')
+  } catch (e) {
+    toast(e.message, true)
+  } finally {
+    b.disabled = false
+  }
+})
+</script>
+</body>
+</html>

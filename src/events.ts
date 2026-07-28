@@ -15,6 +15,11 @@ export const EventSchemas = {
     unit_cost: z.number().nonnegative(),
     ref: z.string().optional(),
   }),
+  OpeningStockSet: z.object({
+    sku: z.string().min(1),
+    qty: z.number().positive(),
+    unit_cost: z.number().nonnegative(),
+  }),
   BillPosted: z.object({
     amount: z.number().positive(),
     vendor: z.string().optional(),
@@ -204,6 +209,20 @@ export async function ingestTx(
         ctx.moveValue = value
         ctx.item = item
         memo = `Received ${qty} ${item.uom} ${item.name} @ ${fmtUSD(unit_cost)}${ref ? ` (${ref})` : ''}`
+        break
+      }
+      case 'OpeningStockSet': {
+        const { sku, qty, unit_cost } = p as { sku: string; qty: number; unit_cost: number }
+        const item = await getItem(tx, tenantId, sku)
+        const { qty: q0, avg: a0 } = await getCost(tx, tenantId, item.id)
+        const value = round2(qty * unit_cost)
+        const newQty = q0 + qty
+        const newAvg = round6((q0 * a0 + qty * unit_cost) / newQty)
+        await setCost(tx, tenantId, item.id, newQty, newAvg)
+        moves.push(await recordMove(tx, tenantId, eventId, item, 'in', qty, unit_cost, value))
+        ctx.moveValue = value
+        ctx.item = item
+        memo = `Opening stock: ${qty} ${item.uom} ${item.name} @ ${fmtUSD(unit_cost)}`
         break
       }
       case 'MaterialIssued': {

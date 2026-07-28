@@ -21,6 +21,7 @@ export function el(html) {
 
 const PAGES = [
   ['dashboard', '/', 'Dashboard'],
+  ['import', '/import.html', 'Import'],
   ['planning', '/planning.html', 'Planning'],
   ['purchasing', '/purchasing.html', 'Purchasing'],
   ['sales', '/sales.html', 'Sales'],

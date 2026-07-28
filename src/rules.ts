@@ -21,6 +21,10 @@ export const POSTING_RULES: Record<string, RuleLine[]> = {
     { account: '@inventory', side: 'debit', source: 'move_value' },
     { account: '2110', side: 'credit', source: 'move_value' },
   ],
+  OpeningStockSet: [
+    { account: '@inventory', side: 'debit', source: 'move_value' },
+    { account: '3900', side: 'credit', source: 'move_value' },
+  ],
   BillPosted: [
     { account: '2110', side: 'debit', source: 'payload_amount' },
     { account: '2100', side: 'credit', source: 'payload_amount' },
