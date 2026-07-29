@@ -1,9 +1,9 @@
 {
-  "name": "simple-erp",
+  "name": "countinghouse",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Simple ERP — Phase 0 kernel: event spine, posting engine, ledger",
+  "description": "Countinghouse — Phase 0 kernel: event spine, posting engine, ledger",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",

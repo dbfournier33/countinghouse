@@ -1,11 +1,11 @@
 {
   "mcpServers": {
-    "simple-erp": {
+    "countinghouse": {
       "command": "npm",
       "args": ["run", "-s", "mcp"],
       "env": {
-        "SERP_URL": "http://localhost:5310",
-        "SERP_TOKEN": "dev-bigsur"
+        "COUNTINGHOUSE_URL": "http://localhost:5310",
+        "COUNTINGHOUSE_TOKEN": "dev-bigsur"
       }
     }
   }

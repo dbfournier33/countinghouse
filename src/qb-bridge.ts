@@ -43,9 +43,9 @@ export async function qbSummary(db: PGlite, tenantId: string, from: string, to: 
   const totalDebits = round2(lines.reduce((s, l) => s + l.debit, 0))
   const totalCredits = round2(lines.reduce((s, l) => s + l.credit, 0))
   return {
-    journal_no: `SERP-${to.replaceAll('-', '').slice(0, 6)}`,
+    journal_no: `CH-${to.replaceAll('-', '').slice(0, 6)}`,
     journal_date: to,
-    memo: `Simple ERP summary ${from} → ${to}`,
+    memo: `Countinghouse summary ${from} → ${to}`,
     lines,
     total_debits: totalDebits,
     total_credits: totalCredits,

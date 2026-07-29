@@ -56,7 +56,7 @@ describe('session flow', () => {
     const res = await post('/auth/login', { email: 'don@test.co', password: 'granola-demo' })
     expect(res.status).toBe(200)
     const cookie = cookieOf(res)
-    expect(cookie).toMatch(/^serp_session=/)
+    expect(cookie).toMatch(/^ch_session=/)
 
     const me = await app.request('/auth/me', { headers: { Cookie: cookie } })
     expect(me.status).toBe(200)
@@ -79,7 +79,7 @@ describe('session flow', () => {
     const nothing = await app.request('/api/trial-balance')
     expect(nothing.status).toBe(401)
     const garbageCookie = await app.request('/api/trial-balance', {
-      headers: { Cookie: 'serp_session=not-a-real-token' },
+      headers: { Cookie: 'ch_session=not-a-real-token' },
     })
     expect(garbageCookie.status).toBe(401)
   })

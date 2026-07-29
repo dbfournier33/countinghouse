@@ -1,14 +1,14 @@
-// Simple ERP MCP server (stdio): the ERP as tools for an AI operator.
+// Countinghouse MCP server (stdio): the ERP as tools for an AI operator.
 // A thin client over the same HTTP API the UI uses — same auth, same
 // validation, same events underneath. Configure with:
-//   SERP_URL   (default http://localhost:5310)
-//   SERP_TOKEN (default dev-bigsur — the tenant's API token)
+//   COUNTINGHOUSE_URL   (default http://localhost:5310)
+//   COUNTINGHOUSE_TOKEN (default dev-bigsur — the tenant's API token)
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { TOOLS, type ApiFn } from './mcp-tools.js'
 
-const BASE = process.env.SERP_URL ?? 'http://localhost:5310'
-const TOKEN = process.env.SERP_TOKEN ?? 'dev-bigsur'
+const BASE = process.env.COUNTINGHOUSE_URL ?? 'http://localhost:5310'
+const TOKEN = process.env.COUNTINGHOUSE_TOKEN ?? 'dev-bigsur'
 
 const api: ApiFn = async (path, init = {}) => {
   const res = await fetch(BASE + path, {
@@ -20,7 +20,7 @@ const api: ApiFn = async (path, init = {}) => {
   return body
 }
 
-const server = new McpServer({ name: 'simple-erp', version: '0.1.0' })
+const server = new McpServer({ name: 'countinghouse', version: '0.1.0' })
 
 for (const tool of TOOLS) {
   server.tool(tool.name, tool.description, tool.schema, async (args: Record<string, unknown>) => {

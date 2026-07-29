@@ -11,6 +11,6 @@ app.use('/*', serveStatic({ root: './public' }))
 
 const port = Number(process.env.PORT ?? 5310)
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`Simple ERP kernel — http://localhost:${info.port}`)
+  console.log(`Countinghouse kernel — http://localhost:${info.port}`)
   console.log('Demo tenant token: dev-bigsur  (seed demo data: npm run seed, before starting the server)')
 })

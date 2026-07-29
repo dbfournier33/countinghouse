@@ -1,4 +1,4 @@
-# Simple ERP — Phase 0 kernel
+# Countinghouse — Phase 0 kernel
 
 The event spine of a radically simple all-in-one ERP for small-to-mid product
 companies. **Operational documents produce events; events produce inventory moves and
@@ -75,7 +75,7 @@ Event types: `GoodsReceived`, `BillPosted`, `ExpenseBillPosted`, `PaymentMade`,
 
 ```bash
 npm run seed && npm run dev   # the API must be running
-npm run mcp                   # stdio MCP server (SERP_URL / SERP_TOKEN env)
+npm run mcp                   # stdio MCP server (COUNTINGHOUSE_URL / COUNTINGHOUSE_TOKEN env)
 ```
 
 A thin client over the same HTTP API as the UI — same auth, same validation, same

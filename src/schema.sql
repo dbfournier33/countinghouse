@@ -1,4 +1,4 @@
--- Simple ERP kernel schema (Postgres dialect; runs identically on PGlite in dev).
+-- Countinghouse kernel schema (Postgres dialect; runs identically on PGlite in dev).
 -- Spine: documents will come in Phase 1 — the kernel is events → moves + ledger.
 
 create table if not exists tenants (

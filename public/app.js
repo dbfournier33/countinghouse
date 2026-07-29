@@ -87,13 +87,13 @@ export function pageShell({ active, title, subtitle }) {
   document.querySelector('.wrap').insertAdjacentHTML(
     'afterbegin',
     `<header>
-       <h1>Simple ERP</h1><span class="badge">PHASE 1</span>
+       <h1>Countinghouse</h1><span class="badge">PHASE 1</span>
        <span class="tenant" id="whoami"></span>
      </header>
      <div id="nav"></div>
      <p class="sub">${subtitle}</p>`,
   )
-  document.title = `Simple ERP — ${title}`
+  document.title = `Countinghouse — ${title}`
   mountNav(active)
   fetch('/auth/me')
     .then((r) => (r.ok ? r.json() : Promise.reject()))

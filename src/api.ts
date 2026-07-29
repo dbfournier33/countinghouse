@@ -9,7 +9,7 @@ import { num, round2 } from './money.js'
 
 type Env = { Variables: { tenantId: string; userName?: string } }
 
-const SESSION_COOKIE = 'serp_session'
+const SESSION_COOKIE = 'ch_session'
 
 export function createApp(db: PGlite) {
   const app = new Hono<Env>()
