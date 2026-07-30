@@ -16,6 +16,7 @@ export type AmountSource =
   | 'settlement_gross'
   | 'settlement_refunds'
   | 'settlement_fees'
+  | 'settlement_taxes'
   | 'settlement_payout'
 
 export interface RuleLine {
@@ -74,12 +75,14 @@ export const POSTING_RULES: Record<string, RuleLine[]> = {
     { account: '5150', side: 'credit', source: 'move_value' },
   ],
   // One payout period, one entry: cash in, fees and refunds recognized, gross
-  // revenue credited. Zero-amount lines are dropped by the engine.
+  // revenue credited, collected sales tax parked as a liability (never
+  // revenue). Zero-amount lines are dropped by the engine.
   ChannelSettlement: [
     { account: '1110', side: 'debit', source: 'settlement_payout' },
     { account: '6200', side: 'debit', source: 'settlement_fees' },
     { account: '4190', side: 'debit', source: 'settlement_refunds' },
     { account: '4150', side: 'credit', source: 'settlement_gross' },
+    { account: '2250', side: 'credit', source: 'settlement_taxes' },
   ],
   OpeningCashSet: [
     { account: '1110', side: 'debit', source: 'payload_amount' },

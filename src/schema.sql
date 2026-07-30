@@ -387,3 +387,5 @@ create table if not exists channel_settlements (
   event_id     uuid not null references events(id),
   created_at   timestamptz not null default now()
 );
+-- Sales tax the channel collected: rides the payout, parks in 2250, never revenue.
+alter table channel_settlements add column if not exists taxes_collected numeric(18,2) not null default 0;

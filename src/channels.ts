@@ -18,13 +18,15 @@ export async function createChannelSettlement(
     gross_sales: number
     refunds?: number
     fees?: number
+    taxes_collected?: number
   },
 ) {
   return db.transaction(async (tx) => {
     const refunds = round2(input.refunds ?? 0)
     const fees = round2(input.fees ?? 0)
+    const taxes = round2(input.taxes_collected ?? 0)
     const gross = round2(input.gross_sales)
-    const payout = round2(gross - refunds - fees)
+    const payout = round2(gross + taxes - refunds - fees)
 
     const overlapping = await tx.query<{ id: string }>(
       `select id from channel_settlements
@@ -46,17 +48,18 @@ export async function createChannelSettlement(
         gross_sales: gross,
         refunds,
         fees,
+        taxes_collected: taxes,
       },
       // Date the journal entry on the period end, not the entry moment.
       occurred_at: `${input.period_end}T12:00:00.000Z`,
     })
     const row = await tx.query<{ id: string }>(
       `insert into channel_settlements
-         (tenant_id, channel, period_start, period_end, gross_sales, refunds, fees, payout, event_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
-      [tenantId, input.channel, input.period_start, input.period_end, gross, refunds, fees, payout, event.event.id],
+         (tenant_id, channel, period_start, period_end, gross_sales, refunds, fees, taxes_collected, payout, event_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+      [tenantId, input.channel, input.period_start, input.period_end, gross, refunds, fees, taxes, payout, event.event.id],
     )
-    return { id: row.rows[0].id, channel: input.channel, payout, event }
+    return { id: row.rows[0].id, channel: input.channel, payout, taxes_collected: taxes, event }
   })
 }
 
@@ -69,10 +72,11 @@ export async function listChannelSettlements(db: PGlite, tenantId: string) {
     gross_sales: string
     refunds: string
     fees: string
+    taxes_collected: string
     payout: string
   }>(
     `select id, channel, period_start::text as period_start, period_end::text as period_end,
-            gross_sales, refunds, fees, payout
+            gross_sales, refunds, fees, taxes_collected, payout
      from channel_settlements
      where tenant_id = $1
      order by period_end desc, channel`,
@@ -83,6 +87,7 @@ export async function listChannelSettlements(db: PGlite, tenantId: string) {
     gross_sales: num(s.gross_sales),
     refunds: num(s.refunds),
     fees: num(s.fees),
+    taxes_collected: num(s.taxes_collected),
     payout: num(s.payout),
   }))
 }

@@ -73,11 +73,14 @@ export const EventSchemas = {
       gross_sales: z.number().nonnegative(),
       refunds: z.number().nonnegative().default(0),
       fees: z.number().nonnegative().default(0),
+      // Sales tax the channel collected on your behalf: rides the payout in,
+      // parks in 2250 Sales tax payable, never touches revenue.
+      taxes_collected: z.number().nonnegative().default(0),
     })
     .refine((v) => v.period_start <= v.period_end, 'period_start must be on or before period_end')
     .refine(
-      (v) => v.gross_sales - v.refunds - v.fees >= 0,
-      'payout would be negative (refunds + fees exceed gross) — split the period or book a manual entry',
+      (v) => v.gross_sales + v.taxes_collected - v.refunds - v.fees >= 0,
+      'payout would be negative (refunds + fees exceed gross + taxes) — split the period or book a manual entry',
     ),
   OpeningCashSet: z.object({ amount: z.number().positive() }),
   OpeningReceivableSet: z.object({
@@ -451,9 +454,11 @@ export async function ingestTx(
           gross_sales: number
           refunds: number
           fees: number
+          taxes_collected: number
         }
-        const payout = round2(s.gross_sales - s.refunds - s.fees)
-        memo = `${s.channel} settlement ${s.period_start} → ${s.period_end}: gross ${fmtUSD(s.gross_sales)} − fees ${fmtUSD(s.fees)} − refunds ${fmtUSD(s.refunds)} = payout ${fmtUSD(payout)}`
+        const payout = round2(s.gross_sales + s.taxes_collected - s.refunds - s.fees)
+        const taxBit = s.taxes_collected ? ` + tax ${fmtUSD(s.taxes_collected)}` : ''
+        memo = `${s.channel} settlement ${s.period_start} → ${s.period_end}: gross ${fmtUSD(s.gross_sales)}${taxBit} − fees ${fmtUSD(s.fees)} − refunds ${fmtUSD(s.refunds)} = payout ${fmtUSD(payout)}`
         break
       }
       case 'OpeningCashSet': {
@@ -487,7 +492,13 @@ export async function ingestTx(
         : ruleRow.rows[0].lines
 
     const amountFor = (source: RuleLine['source']): number => {
-      const s = p as { amount?: number; gross_sales?: number; refunds?: number; fees?: number }
+      const s = p as {
+        amount?: number
+        gross_sales?: number
+        refunds?: number
+        fees?: number
+        taxes_collected?: number
+      }
       switch (source) {
         case 'move_value':
           return ctx.moveValue ?? 0
@@ -503,8 +514,10 @@ export async function ingestTx(
           return round2(num(s.refunds))
         case 'settlement_fees':
           return round2(num(s.fees))
+        case 'settlement_taxes':
+          return round2(num(s.taxes_collected))
         case 'settlement_payout':
-          return round2(num(s.gross_sales) - num(s.refunds) - num(s.fees))
+          return round2(num(s.gross_sales) + num(s.taxes_collected) - num(s.refunds) - num(s.fees))
       }
     }
 

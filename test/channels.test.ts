@@ -59,6 +59,26 @@ describe('channel settlements', () => {
     expect(await balance(t, '4190')).toBe(50) // debit-normal contra revenue
   })
 
+  it('parks collected sales tax in 2250, never in revenue, and includes it in the payout', async () => {
+    const t = await makeTenant()
+    const r = await createChannelSettlement(db, t, {
+      channel: 'Shopify',
+      period_start: '2026-07-20',
+      period_end: '2026-07-26',
+      gross_sales: 1000,
+      taxes_collected: 70,
+      refunds: 50,
+      fees: 120,
+    })
+    expect(r.payout).toBe(900) // 1000 + 70 − 50 − 120
+    const lines = Object.fromEntries(r.event.journal!.lines.map((l) => [l.code, l]))
+    expect(lines['1110']).toMatchObject({ side: 'debit', amount: 900 })
+    expect(lines['2250']).toMatchObject({ side: 'credit', amount: 70 })
+    expect(lines['4150']).toMatchObject({ side: 'credit', amount: 1000 }) // revenue untouched by tax
+    expect(await balance(t, '2250')).toBe(70)
+    expect(await balance(t, '4150')).toBe(1000)
+  })
+
   it('drops zero-amount lines and dates the entry on period end', async () => {
     const t = await makeTenant()
     const r = await createChannelSettlement(db, t, {

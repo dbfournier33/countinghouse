@@ -233,6 +233,7 @@ export function mountDocumentRoutes(app: Hono<Env>, db: PGlite) {
         gross_sales: z.number().nonnegative(),
         refunds: z.number().nonnegative().optional(),
         fees: z.number().nonnegative().optional(),
+        taxes_collected: z.number().nonnegative().optional(),
       })
       .parse(await c.req.json())
     return c.json(await createChannelSettlement(db, c.var.tenantId, body), 201)

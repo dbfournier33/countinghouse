@@ -357,6 +357,16 @@ export async function closeChecks(db: PGlite, tenantId: string): Promise<CloseCh
     detail: Number(ar.n) > 0 ? `${ar.n} invoice(s), $${num(ar.total).toFixed(2)}, oldest ${ar.oldest}` : 'nothing outstanding',
   })
 
+  const salesTax = bal('2250')
+  checks.push({
+    label: 'Sales tax collected',
+    status: salesTax > 0.005 ? 'info' : 'ok',
+    detail:
+      salesTax > 0.005
+        ? `$${salesTax.toFixed(2)} held in 2250 — remit via your filing provider or accountant (we keep the books; they file)`
+        : 'nothing held',
+  })
+
   const openAP = await db.query<{ n: string; total: string; oldest: string | null }>(
     `select count(*) as n, coalesce(sum(amount), 0) as total, min(bill_date)::text as oldest
      from bills where tenant_id = $1 and status = 'open'`,
