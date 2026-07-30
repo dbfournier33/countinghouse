@@ -1,18 +1,22 @@
 :root {
-  --bg: #f6f6f3;
+  /* Ledger Green world — brand decision #8, 2026-07-30 */
+  --bg: #f7f4ec;
   --surface: #ffffff;
   --ink: #1c2024;
   --ink-2: #5a636e;
   --ink-3: #8b939e;
-  --line: #e5e7e2;
-  --accent: #0b5d8f;
+  --line: #e3e0d6;
+  --accent: #175239;
+  --accent-deep: #0e3b28;
+  --brass: #d9b64a;
   --good: #156f46;
   --good-bg: #e8f4ec;
   --warn: #8a5a00;
   --warn-bg: #f5ecd7;
   --bad: #a03123;
   --bad-bg: #f9ece9;
-  --chip: #eef1f4;
+  --chip: #edefe6;
+  --serif: 'Iowan Old Style', 'Palatino', 'Palatino Linotype', Georgia, serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
 }
 * { box-sizing: border-box; }
@@ -23,6 +27,11 @@ body {
 .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 24px 64px; }
 header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
 h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+/* The brandmark: serif wordmark closed by the double rule. */
+h1.brandmark {
+  font-family: var(--serif); font-size: 22px; font-weight: 700;
+  border-bottom: 7px double var(--accent); padding-bottom: 1px; line-height: 1.15;
+}
 .badge {
   font: 600 11px/1 var(--mono); color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, white); border-radius: 99px;

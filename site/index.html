@@ -8,12 +8,15 @@
 <meta property="og:title" content="Countinghouse" />
 <meta property="og:description" content="The ERP that does its own accounting. Live in days, not quarters." />
 <meta property="og:type" content="website" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧮</text></svg>" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23f7f4ec%22/><text x=%2220%22 y=%2225%22 text-anchor=%22middle%22 font-family=%22Georgia,serif%22 font-size=%2224%22 font-weight=%22700%22 fill=%22%231c2024%22>C</text><line x1=%228%22 y1=%2230%22 x2=%2232%22 y2=%2230%22 stroke=%22%23175239%22 stroke-width=%222.6%22/><line x1=%228%22 y1=%2235%22 x2=%2232%22 y2=%2235%22 stroke=%22%23175239%22 stroke-width=%222.6%22/></svg>" />
 <style>
   :root {
-    --bg: #f6f6f3; --surface: #ffffff; --ink: #1c2024; --ink-2: #5a636e; --ink-3: #8b939e;
-    --line: #e5e7e2; --accent: #0b5d8f; --accent-deep: #123c5e; --tint: #eef4f8;
-    --good: #156f46; --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    /* Ledger Green — brand decision #8 */
+    --bg: #f7f4ec; --surface: #ffffff; --ink: #1c2024; --ink-2: #5a636e; --ink-3: #8b939e;
+    --line: #e3e0d6; --accent: #175239; --accent-deep: #0e3b28; --tint: #eaf0e9;
+    --brass: #d9b64a; --good: #156f46;
+    --serif: 'Iowan Old Style', 'Palatino', 'Palatino Linotype', Georgia, serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
@@ -25,10 +28,13 @@
 
   header.hero { padding: 72px 0 56px; }
   .brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  .brand h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; }
+  .brand h1 {
+    font-family: var(--serif); font-size: 42px; font-weight: 700; letter-spacing: -0.015em;
+    display: inline-block; border-bottom: 9px double var(--accent); padding-bottom: 5px;
+  }
   .badge {
     font: 600 11px/1 var(--mono); color: var(--accent); letter-spacing: 0.05em;
-    border: 1px solid #bcd4e4; border-radius: 99px; padding: 5px 10px; background: var(--tint);
+    border: 1px solid #c3d4c4; border-radius: 99px; padding: 5px 10px; background: var(--tint);
   }
   .tagline { margin-top: 10px; font-size: 24px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; }
   .hero p.sub { margin-top: 18px; font-size: 17.5px; color: var(--ink-2); max-width: 640px; }
@@ -36,10 +42,10 @@
   section.manifesto { background: var(--accent-deep); color: #fff; padding: 44px 0; }
   .manifesto p { font-size: 19px; max-width: 700px; line-height: 1.6; }
   .manifesto p + p { margin-top: 14px; }
-  .manifesto .kicker { color: #9fc3dd; font: 600 12px/1 var(--mono); letter-spacing: 0.08em; margin-bottom: 14px; }
-  .manifesto b { color: #cfe4f2; }
+  .manifesto .kicker { color: #9fc0aa; font: 600 12px/1 var(--mono); letter-spacing: 0.08em; margin-bottom: 14px; }
+  .manifesto b { color: var(--brass); }
   .spine {
-    margin-top: 22px; font-family: var(--mono); font-size: 13.5px; color: #9fc3dd;
+    margin-top: 22px; font-family: var(--mono); font-size: 13.5px; color: #9fc0aa;
     background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
     border-radius: 10px; padding: 14px 18px; display: inline-block;
   }
@@ -61,7 +67,7 @@
 
   section.cta { padding: 56px 0 72px; }
   .cta .box {
-    background: var(--tint); border: 1px solid #bcd4e4; border-radius: 14px; padding: 30px 32px;
+    background: var(--tint); border: 1px solid #c3d4c4; border-radius: 14px; padding: 30px 32px;
   }
   .cta h2 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
   .cta p { margin-top: 10px; color: var(--ink-2); font-size: 15.5px; max-width: 640px; }
@@ -69,7 +75,7 @@
     display: inline-block; margin-top: 18px; background: var(--accent); color: #fff;
     text-decoration: none; font-weight: 600; font-size: 15.5px; padding: 12px 22px; border-radius: 10px;
   }
-  .cta a.button:hover { background: #094b74; }
+  .cta a.button:hover { background: var(--accent-deep); }
 
   footer { padding: 0 0 44px; color: var(--ink-3); font-size: 13px; }
   footer .wrap { border-top: 1px solid var(--line); padding-top: 18px; }

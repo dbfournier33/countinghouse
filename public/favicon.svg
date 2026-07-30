@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" role="img" aria-label="Countinghouse">
+  <rect width="40" height="40" rx="8" fill="#f7f4ec"/>
+  <text x="20" y="25" text-anchor="middle" font-family="'Iowan Old Style','Palatino',Georgia,serif" font-size="24" font-weight="700" fill="#1c2024">C</text>
+  <line x1="8" y1="30" x2="32" y2="30" stroke="#175239" stroke-width="2.6"/>
+  <line x1="8" y1="35" x2="32" y2="35" stroke="#175239" stroke-width="2.6"/>
+</svg>

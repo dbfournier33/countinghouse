@@ -87,7 +87,7 @@ export function pageShell({ active, title, subtitle }) {
   document.querySelector('.wrap').insertAdjacentHTML(
     'afterbegin',
     `<header>
-       <h1>Countinghouse</h1><span class="badge">PHASE 1</span>
+       <h1 class="brandmark">Countinghouse</h1><span class="badge">PHASE 1</span>
        <span class="tenant" id="whoami"></span>
      </header>
      <div id="nav"></div>
