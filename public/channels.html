@@ -14,7 +14,11 @@
     <section class="card">
       <h2>Record a payout settlement</h2>
       <div class="formrow">
-        <select id="s-channel"><option>Shopify</option><option>Amazon</option><option>Faire</option><option>Etsy</option></select>
+        <input id="s-channel" list="channel-options" value="Shopify" style="width:140px" title="any platform — type your own" />
+        <datalist id="channel-options">
+          <option>Shopify</option><option>Amazon</option><option>WooCommerce</option>
+          <option>BigCommerce</option><option>Faire</option><option>Etsy</option><option>Walmart</option>
+        </datalist>
         <input id="s-start" type="date" title="period start" />
         <input id="s-end" type="date" title="period end" />
       </div>
@@ -32,7 +36,7 @@
     <section class="card">
       <h2>Record channel shipments (keeps COGS true)</h2>
       <div class="formrow">
-        <select id="h-channel"><option>Shopify</option><option>Amazon</option><option>Faire</option><option>Etsy</option></select>
+        <input id="h-channel" list="channel-options" value="Shopify" style="width:140px" title="any platform — type your own" />
         <input id="h-end" type="date" title="period end" />
       </div>
       <div class="lines-editor" id="h-lines"></div>
