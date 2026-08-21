@@ -10,6 +10,9 @@ steps anywhere.
 Design docs live in the project folder:
 `02-Architecture-Design/Simple-ERP_Architecture-Sketch_2026-07-28.md`.
 
+**Stack:** TypeScript · Hono · PGlite (Postgres-in-WASM) · Zod · Vitest · Model Context Protocol
+**Test suite:** 83 tests across 12 files — kernel invariants, documents, finance, imports, auth, MCP — trial balance verified to the cent.
+
 ## Quickstart
 
 ```bash
